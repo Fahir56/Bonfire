@@ -1,6 +1,6 @@
 # Bonfire — Render version (no Supabase)
 
-This version uses an Express + Socket.IO backend and PostgreSQL. Accounts, servers, channels, and chat messages are handled by the server. It includes basic peer-to-peer voice signaling for small groups. No Supabase project or client keys are required.
+This version uses an Express + Socket.IO backend and PostgreSQL. Accounts, servers, channels, chat messages, friend requests, friendships, direct messages, and image/video attachments are handled by the server. Every new account joins the shared Bonfire server. It includes basic peer-to-peer voice signaling for small groups. No Supabase project or client keys are required.
 
 ## Deploy to Render with Blueprint
 1. Upload the contents of this folder to a new GitHub repository (the `package.json`, `server.js`, `render.yaml`, and `public/` folder should be at repository root).
@@ -21,7 +21,10 @@ npm start
 
 ## Important scope notes
 - No Supabase required.
-- Chat, accounts, servers, channels, invite links, and members are backed by PostgreSQL.
+- Chat, username/password accounts, servers, channels, invite links, and members are backed by PostgreSQL.
+- Every new account joins the shared `Bonfire` server (created on first signup).
+- Friend requests and accepted friendships; direct messages are restricted to friends.
+- Image/video uploads are stored in PostgreSQL, limited to 20 MB per file. Supported: PNG, JPG, GIF, WebP, MP4, WebM, and MOV.
 - Voice is peer-to-peer mesh intended for small groups. Some networks require TURN infrastructure; without it, voice may fail for some users.
-- File/image uploads are not implemented in this rewrite yet.
+- File/image uploads use PostgreSQL byte storage; large volumes of video can make the database grow quickly. For a public launch, use dedicated object storage (such as S3-compatible storage) and add rate limits and moderation.
 - Before a large public launch, add rate limiting, email verification/password reset, moderation/reporting, upload storage, and stronger production monitoring.
