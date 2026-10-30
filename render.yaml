@@ -15,6 +15,8 @@ services:
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
+      - key: MESSAGE_RETENTION_DAYS
+        value: "90"
 
 databases:
   - name: bonfire-db
