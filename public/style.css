@@ -186,8 +186,33 @@ button{cursor:pointer;border:0;background:none;-webkit-tap-highlight-color:trans
 .me{border-top:1px solid var(--line);padding:10px 10px 10px 12px;display:flex;align-items:center;gap:8px;background:#16171e;flex-shrink:0}
 .me-info{min-width:0;flex:1}
 .me-info b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13.5px}
-.me-info small{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--green)}
-.me-info small i{width:7px;height:7px;border-radius:50%;background:var(--green)}
+.me-info small{display:block;font-size:11px;font-weight:600;color:var(--green);transition:color .3s}
+.me-info small.afk{color:var(--afk)}
+.me-info small.offline{color:var(--muted)}
+
+/* ---------- Presence dots: online = green, afk = yellow moon, offline = grey ring ---------- */
+:root{--afk:#f6c23e;--offline:#6b7183}
+.avatar-wrap{position:relative;flex-shrink:0;--ring:var(--panel)}
+.me .avatar-wrap{--ring:#16171e}
+.friend-row .avatar-wrap{--ring:#1e2029}
+.status-dot{position:absolute;right:-3px;bottom:-3px;width:15px;height:15px;border-radius:50%;border:3px solid var(--ring);background:var(--green);
+  transition:background-color .3s,transform .45s var(--spring-hard);overflow:hidden}
+.status-dot::after{content:'';position:absolute;border-radius:50%;background:var(--ring);transform:scale(0);transition:transform .35s var(--spring)}
+.status-dot.afk{background:var(--afk)}
+.status-dot.afk::after{width:8px;height:8px;top:-3px;left:-3px;transform:scale(1)}
+.status-dot.offline{background:var(--offline)}
+.status-dot.offline::after{width:5px;height:5px;top:2px;left:2px;transform:scale(1)}
+.status-dot.changed{animation:jelly .6s var(--spring-hard)}
+.member-group{font-size:10.5px;font-weight:700;letter-spacing:1px;color:var(--muted);margin:16px 8px 4px}
+.member-group:first-child{margin-top:0}
+.member.offline{opacity:.42}
+.member.offline .avatar{filter:grayscale(.8)}
+.member.offline:hover{opacity:.8}
+.zzz{display:inline-block;margin-left:4px;font-size:12px;animation:zzz 2.4s ease-in-out infinite}
+@keyframes zzz{0%,100%{transform:translateY(0) rotate(-6deg);opacity:.6}50%{transform:translateY(-4px) rotate(8deg);opacity:1}}
+.member-scroll.settled .member{animation:none}
+.online-pill.offline{background:#ff7a7a14;color:var(--danger)}
+.online-pill.offline i{background:var(--danger);animation:none}
 
 /* ---------- Avatars ---------- */
 .avatar{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:#8c6eb3;color:#fff;font:700 15px 'DM Sans',system-ui,sans-serif;flex-shrink:0;text-shadow:0 1px 2px #0004;transition:transform .4s var(--spring),border-radius .4s var(--spring)}
@@ -300,7 +325,7 @@ video.message-media{cursor:default}
 .members-title{font-size:11px;letter-spacing:1px;font-weight:700;color:var(--muted);margin:0 8px 12px;display:flex;justify-content:space-between}
 .members-title span{padding:0 8px;border-radius:9px;background:var(--raise)}
 .member-scroll{flex:1;min-height:0;overflow-y:auto}
-.member{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:12px;color:var(--soft);font-size:13.5px;cursor:default;animation:pop-in .4s var(--spring) backwards}
+.member{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:12px;color:var(--soft);font-size:13.5px;cursor:pointer;animation:pop-in .4s var(--spring) backwards}
 .member:hover{background:var(--raise);transform:translateX(-4px)}
 .member:hover .avatar{transform:rotate(12deg) scale(1.12);border-radius:35%}
 .member .avatar{width:32px;height:32px;font-size:13px}
@@ -334,6 +359,14 @@ video.message-media{cursor:default}
 .toast{position:fixed;bottom:26px;left:50%;z-index:40;translate:-50% 0;background:#2b2e3c;color:#fff;padding:12px 18px;border-radius:14px;border:1px solid #ffffff18;
   opacity:0;pointer-events:none;transform:translateY(30px) scale(.8);transition:opacity .2s,transform .45s var(--spring-hard);box-shadow:0 14px 40px #000a;font-weight:600;max-width:calc(100vw - 32px)}
 .toast.show{opacity:1;transform:none}
+.toast.clickable{pointer-events:auto;cursor:pointer;background:linear-gradient(90deg,#3a2433,#2b2e3c);border-color:#ff5d8f55}
+.toast.clickable:hover{transform:scale(1.04)}
+/* Click a person to DM them */
+.member>span:not(.dm-hint){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dm-hint{opacity:0;transform:scale(.3) rotate(-30deg);transition:opacity .2s,transform .4s var(--spring-hard);font-size:14px}
+.member:hover .dm-hint{opacity:1;transform:none}
+.author{cursor:pointer}
+b.author:hover{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:3px}
 
 .tip{position:fixed;z-index:50;pointer-events:none;background:#08090c;color:#fff;font-size:12.5px;font-weight:700;padding:7px 11px;border-radius:10px;white-space:nowrap;
   box-shadow:0 8px 24px #0009;opacity:0;transform:scale(.6);transform-origin:left center;transition:opacity .12s,transform .3s var(--spring-hard)}

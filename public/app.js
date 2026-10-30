@@ -3,18 +3,27 @@ let token = null, user = null, servers = [], channels = [], activeServer = null,
 let localStream = null, voicePeers = new Map(), voiceServer = null, activeDM = null, selectedFile = null, selectedPreviewUrl = null;
 let lastMsg = null, unread = 0, stickToBottom = true, loadTicket = 0, lastTypingSent = 0, askEscape = null;
 const typers = new Map();
+const presence = new Map(); // userId -> 'online' | 'afk' | 'offline'
+let members = [], myStatus = 'online', sentStatus = null, membersReload;
+const STATUS_LABEL = { online: 'Online', afk: 'AFK', offline: 'Offline' };
+const STATUS_TIP = { online: 'Online', afk: 'AFK — tabbed out', offline: 'Offline' };
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const palette = ['#8c6eb3', '#d07a4f', '#4f93a3', '#c4607f', '#5e9e6b', '#b0894a', '#6a7fd0', '#c76ad0'];
 const EMOJIS = ['🔥', '😂', '🥹', '😭', '💀', '🤝', '👀', '✨', '❤️', '👍', '🎉', '🙏', '😎', '🤔', '😤', '🥳', '🫡', '😴', '🍕', '🌭', '🍿', '🐸', '🦆', '💯'];
 
 /* ---------- small helpers ---------- */
 let toastTimer;
-function toast(s) { $('toast').textContent = s; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 2600) }
+function toast(s, onClick) {
+  const t = $('toast'); t.textContent = s; t.classList.add('show'); t.classList.toggle('clickable', !!onClick);
+  t.onclick = onClick ? () => { t.classList.remove('show'); onClick() } : null;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), onClick ? 5000 : 2600);
+}
 function initials(s) { return [...(s || '?').trim()][0]?.toUpperCase() || '?' }
 function safe(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])) }
 function time(s) { return new Date(s).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
 function colorFor(s) { let h = 0; for (const c of String(s || '?')) h = (h * 31 + c.codePointAt(0)) >>> 0; return palette[h % palette.length] }
-function avatar(name, cls = 'avatar') { return `<div class="${cls}" style="background:${colorFor(name)}">${safe(initials(name))}</div>` }
+function avatar(name, cls = 'avatar', attrs = '') { return `<div class="${cls}" ${attrs} style="background:${colorFor(name)}">${safe(initials(name))}</div>` }
+function avatarWithStatus(name, id) { const st = statusOf(id); return `<div class="avatar-wrap">${avatar(name)}<i class="status-dot ${st}" data-presence="${safe(id)}" data-tip="${STATUS_TIP[st]}"></i></div>` }
 function dayKey(d) { return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate() }
 function dayLabel(d) {
   const today = new Date(), y = new Date(); y.setDate(today.getDate() - 1);
@@ -71,7 +80,7 @@ function sparks(x, y, n = 8, { emoji = null, spread = 1, up = false } = {}) {
 function centerOf(el) { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2] }
 
 /* Every button gets a jelly boing + a tiny burst + a boop */
-const SQUISHY = 'button, .attach, .server-logo, .me-avatar';
+const SQUISHY = 'button, .attach, .server-logo, .me-avatar, .member, .avatar.author';
 document.addEventListener('click', e => {
   const b = e.target.closest(SQUISHY); if (!b) return;
   b.classList.remove('boing'); void b.offsetWidth; b.classList.add('boing');
@@ -161,16 +170,17 @@ async function boot() {
     if (!user) user = (await api('/api/me')).user;
     $('auth').classList.add('hidden'); $('app').classList.remove('hidden');
     $('myName').textContent = user.display_name; $('myAvatar').textContent = initials(user.display_name); $('myAvatar').style.background = colorFor(user.display_name);
-    socket = io({ auth: { token } });
-    socket.on('connect', () => { setConn(true); if (activeChannel && !activeDM) socket.emit('channel:join', { channelId: activeChannel.id }) });
+    socket = io({ auth: cb => cb({ token, status: currentStatus() }) });
+    socket.on('connect', () => { sentStatus = null; syncStatus(); setConn(true); if (activeChannel && !activeDM) socket.emit('channel:join', { channelId: activeChannel.id }); if (activeServer) loadMembers(false) });
     socket.on('disconnect', () => setConn(false));
     socket.on('connect_error', () => { setConn(false); toast('Connection issue. Please sign in again.') });
     socket.on('message:new', m => { if (!activeDM && m.channel_id === activeChannel?.id) incoming(m) });
     socket.on('dm:new', m => {
       if (activeDM && ((m.sender_id === user.id && m.recipient_id === activeDM.id) || (m.sender_id === activeDM.id && m.recipient_id === user.id))) incoming(m);
-      else if (m.sender_id !== user.id) { toast(`💌 New DM from ${m.display_name}`); blip('boop') }
+      else if (m.sender_id !== user.id) { toast(`💌 New DM from ${m.display_name} — tap to reply`, () => openUser(m.sender_id, m.display_name)); blip('boop') }
     });
     socket.on('typing', onTyping);
+    socket.on('presence:update', ({ userId, status }) => setPresence(userId, status));
     socket.on('app:error', toast);
     socket.on('voice:peer-joined', peerJoined); socket.on('voice:peer-left', peerLeft); socket.on('voice:signal', handleSignal);
     if (matchMedia('(max-width:1000px)').matches) $('app').classList.add('no-members');
@@ -180,7 +190,42 @@ async function boot() {
     if (invite) { await joinByCode(invite); history.replaceState({}, '', location.pathname) }
   } catch (e) { localStorage.removeItem('bonfireToken'); token = null; user = null; $('app').classList.add('hidden'); showAuth(); $('authError').textContent = e.message }
 }
-function setConn(ok) { $('onlineText').textContent = ok ? 'connected' : 'reconnecting…'; document.querySelector('.server-bottom').classList.toggle('offline', !ok); document.querySelector('.server-bottom').dataset.tip = ok ? 'Connected' : 'Reconnecting…' }
+function setConn(ok) { document.querySelector('.server-bottom').classList.toggle('offline', !ok); document.querySelector('.server-bottom').dataset.tip = ok ? 'Connected' : 'Reconnecting…'; renderMe(); renderOnlinePill() }
+
+/* ---------- presence: online (focused) / afk (open, not focused) / offline ---------- */
+function currentStatus() { return document.visibilityState === 'visible' && document.hasFocus() ? 'online' : 'afk' }
+function statusOf(id) { return id === user?.id ? (socket?.connected ? myStatus : 'offline') : presence.get(id) || 'offline' }
+function syncStatus() {
+  myStatus = currentStatus(); renderMe();
+  if (socket?.connected && sentStatus !== myStatus) { socket.emit('presence', { status: myStatus }); sentStatus = myStatus; if (members.some(m => m.id === user.id)) renderMembers() }
+}
+addEventListener('focus', syncStatus); addEventListener('blur', syncStatus); document.addEventListener('visibilitychange', syncStatus);
+function renderMe() {
+  if (!user) return;
+  const st = statusOf(user.id);
+  $('myStatus').className = st; $('myStatus').textContent = st === 'afk' ? 'AFK 💤' : STATUS_LABEL[st];
+  setDot($('myDot'), st);
+}
+function setDot(dot, st) {
+  if (dot.classList.contains(st)) return;
+  dot.className = 'status-dot ' + st + ' changed'; dot.dataset.tip = STATUS_TIP[st];
+  dot.addEventListener('animationend', () => dot.classList.remove('changed'), { once: true });
+}
+function setPresence(id, st) {
+  if (presence.get(id) === st) return;
+  presence.set(id, st);
+  if (members.some(m => m.id === id)) renderMembers();
+  else if (st !== 'offline' && activeServer) { clearTimeout(membersReload); membersReload = setTimeout(() => loadMembers(false), 300) } // someone new just joined
+  document.querySelectorAll(`[data-presence="${CSS.escape(id)}"]`).forEach(d => setDot(d, st));
+  if (activeDM?.id === id) renderDMTopic();
+}
+function renderOnlinePill() {
+  const pill = document.querySelector('.online-pill'), ok = !!socket?.connected;
+  pill.classList.toggle('offline', !ok);
+  if (!ok) { $('onlineText').textContent = 'reconnecting…'; return }
+  const on = members.filter(m => statusOf(m.id) === 'online').length, afk = members.filter(m => statusOf(m.id) === 'afk').length;
+  $('onlineText').textContent = `${on} online` + (afk ? ` · ${afk} afk` : '');
+}
 
 /* ---------- servers & channels ---------- */
 async function loadServers() {
@@ -245,8 +290,9 @@ function renderMessage(m, { animate = false } = {}) {
   const el = document.createElement('article');
   el.className = 'message' + (compact ? ' compact' : '') + (mine ? ' mine' : '') + (animate ? ' new' : '');
   el.dataset.message = m.id;
-  el.innerHTML = (compact ? `<time class="stamp">${time(m.created_at)}</time>` : avatar(n)) +
-    `<div class="message-body">${compact ? '' : `<div class="message-meta"><b>${safe(n)}</b><time title="${safe(at.toLocaleString())}">${time(m.created_at)}</time></div>`}` +
+  const who = `data-user="${safe(m.user_id)}" data-name="${safe(n)}"`;
+  el.innerHTML = (compact ? `<time class="stamp">${time(m.created_at)}</time>` : avatar(n, 'avatar author', who)) +
+    `<div class="message-body">${compact ? '' : `<div class="message-meta"><b class="author" ${who}>${safe(n)}</b><time title="${safe(at.toLocaleString())}">${time(m.created_at)}</time></div>`}` +
     `${m.content ? `<div class="message-text${jumbo ? ' jumbo' : ''}">${linkify(safe(m.content))}</div>` : ''}${media}</div>`;
   el.querySelectorAll('img,video').forEach(x => x.addEventListener(x.tagName === 'IMG' ? 'load' : 'loadedmetadata', () => { if (stickToBottom) scrollBottom() }, { once: true }));
   el.addEventListener('dblclick', e => { if (e.target.closest('a,video')) return; window.getSelection()?.removeAllRanges(); sparks(e.clientX, e.clientY, 10, { emoji: ['❤️', '🔥', '✨', '💖'], spread: 1.4 }); blip('boop') });
@@ -393,12 +439,26 @@ async function joinByCode(raw) {
 }
 
 /* ---------- members ---------- */
-async function loadMembers() {
+async function loadMembers(animate = true) {
   try {
-    const d = await api(`/api/servers/${activeServer.id}/members`);
-    $('memberCount').textContent = d.members.length;
-    $('memberList').innerHTML = d.members.map((m, i) => `<div class="member" style="animation-delay:${Math.min(i, 15) * 35}ms">${avatar(m.display_name)}<span>${safe(m.display_name)}${m.id === user.id ? ' <em>(you)</em>' : ''}</span></div>`).join('');
+    const serverId = activeServer.id, d = await api(`/api/servers/${serverId}/members`);
+    if (serverId !== activeServer?.id) return;
+    members = d.members; d.members.forEach(m => { if (m.id !== user.id) presence.set(m.id, m.status) });
+    renderMembers(animate);
   } catch { }
+}
+/* Members grouped Online → AFK → Offline, like a real campfire roll call */
+function renderMembers(animate = false) {
+  const groups = { online: [], afk: [], offline: [] };
+  members.forEach(m => groups[statusOf(m.id)].push(m));
+  let i = 0;
+  $('memberList').classList.toggle('settled', !animate);
+  $('memberCount').textContent = members.length;
+  $('memberList').innerHTML = Object.entries(groups).filter(([, list]) => list.length).map(([st, list]) =>
+    `<div class="member-group">${STATUS_LABEL[st].toUpperCase()} — ${list.length}</div>` +
+    list.map(m => `<div class="member ${st}" data-user="${safe(m.id)}" data-name="${safe(m.display_name)}" data-username="${safe(m.username || '')}" style="animation-delay:${Math.min(i++, 15) * 35}ms">${avatarWithStatus(m.display_name, m.id)}<span>${safe(m.display_name)}${m.id === user.id ? ' <em>(you)</em>' : ''}${st === 'afk' ? '<span class="zzz">💤</span>' : ''}</span>${m.id === user.id ? '' : '<span class="dm-hint">💬</span>'}</div>`).join('')
+  ).join('');
+  renderOnlinePill();
 }
 $('membersToggle').onclick = () => {
   if (matchMedia('(max-width:1000px)').matches) $('app').classList.toggle('members-open');
@@ -411,6 +471,18 @@ function closeDrawers() { $('app').classList.remove('drawer-open', 'members-open
 $('scrim').onclick = closeDrawers;
 
 /* ---------- friends & DMs ---------- */
+/* Click anyone (member list, message avatar or name) to jump into a DM with them */
+function openUser(id, name, username) {
+  if (!id) return;
+  if (id === user.id) { toast("That's you! Talking to yourself is free though 🪞"); return }
+  const m = members.find(x => x.id === id);
+  openDM({ id, display_name: name || m?.display_name || 'friend', username: username || m?.username || name || m?.display_name });
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-user]'); if (!t) return;
+  openUser(t.dataset.user, t.dataset.name, t.dataset.username);
+});
+
 $('friendsOpen').onclick = async () => { $('friendModal').classList.remove('hidden'); closeDrawers(); await loadFriends() };
 function closeFriends() { $('friendModal').classList.add('hidden') }
 $('friendsClose').onclick = closeFriends;
@@ -426,12 +498,13 @@ $('friendForm').onsubmit = async e => {
 async function loadFriends() {
   try {
     const d = await api('/api/friends');
+    d.friends.forEach(f => presence.set(f.id, f.status));
     $('friendBadge').textContent = d.incoming.length; $('friendBadge').classList.toggle('hidden', !d.incoming.length);
     $('friendRequests').innerHTML = d.incoming.length
       ? d.incoming.map((f, i) => `<div class="friend-row" style="animation-delay:${i * 40}ms">${avatar(f.display_name)}<span>@${safe(f.username)}</span><button class="primary" data-accept="${f.id}">Accept</button></div>`).join('')
       : '<p class="muted">No pending requests.</p>';
     $('friendList').innerHTML = (d.friends.length
-      ? d.friends.map((f, i) => `<div class="friend-row" style="animation-delay:${i * 40}ms">${avatar(f.display_name)}<span>@${safe(f.username)}</span><button data-dm="${f.id}" data-name="${safe(f.display_name)}" data-username="${safe(f.username)}">💬 Message</button></div>`).join('')
+      ? d.friends.map((f, i) => `<div class="friend-row" style="animation-delay:${i * 40}ms">${avatarWithStatus(f.display_name, f.id)}<span>@${safe(f.username)}</span><button data-dm="${f.id}" data-name="${safe(f.display_name)}" data-username="${safe(f.username)}">💬 Message</button></div>`).join('')
       : '<p class="muted">Add a friend by username to start a DM.</p>')
       + (d.outgoing.length ? `<p class="modal-label">WAITING ON</p>` + d.outgoing.map(f => `<div class="friend-row">${avatar(f.display_name)}<span>@${safe(f.username)}</span><small class="muted">pending…</small></div>`).join('') : '');
     document.querySelectorAll('[data-accept]').forEach(b => b.onclick = async () => {
@@ -440,10 +513,11 @@ async function loadFriends() {
     document.querySelectorAll('[data-dm]').forEach(b => b.onclick = () => openDM({ id: b.dataset.dm, display_name: b.dataset.name, username: b.dataset.username }));
   } catch (e) { $('friendError').textContent = e.message }
 }
+function renderDMTopic() { const st = statusOf(activeDM.id); $('channelTopic').textContent = `Direct message · ${st === 'afk' ? 'AFK 💤' : STATUS_LABEL[st]}` }
 async function openDM(friend) {
   activeDM = friend; activeChannel = null; typers.clear(); renderTyping(); renderChannels();
   closeFriends(); closeDrawers();
-  $('chatSigil').textContent = '@'; $('channelName').textContent = friend.username; $('channelTopic').textContent = 'Direct message with ' + friend.display_name;
+  $('chatSigil').textContent = '@'; $('channelName').textContent = friend.username; renderDMTopic();
   $('messageInput').placeholder = 'Message @' + friend.username;
   resetMessages('dm', friend.username);
   const ticket = ++loadTicket;
