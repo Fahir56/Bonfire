@@ -1,3 +1,151 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bonfire — hang out together</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="style.css"><script src="/socket.io/socket.io.js"></script></head><body>
-<div id="auth" class="auth"><div class="auth-card"><div class="brand"><span class="flame">✦</span> bonfire</div><p class="muted">Your people. Your place.</p><h1>Come hang out.</h1><input id="username" type="text" placeholder="Username (3–24 characters)" autocomplete="username" maxlength="24"><input id="password" type="password" placeholder="Password (8+ characters)" autocomplete="current-password"><div class="auth-actions"><button id="signin" class="primary">Sign in</button><button id="signup" class="secondary">Create account</button></div><p id="authError" class="error"></p><p class="tiny">Create an account to start your own Bonfire.</p></div></div>
-<div id="app" class="app hidden"><aside class="servers"><div class="server-logo">✦</div><div id="serverList"></div><button id="addServer" class="server-add" title="Create a server">＋</button><button id="joinServer" class="server-add" title="Join by invite">↗</button><div class="server-bottom">●</div></aside><aside class="channels"><div class="workspace-head"><div><b id="serverName">Bonfire</b><small>your little corner of the internet</small></div><button id="invite" title="Copy invite">⌁</button><button id="friendsOpen" title="Friends and DMs">♧</button></div><div class="channel-scroll"><div class="section-label">TEXT CHANNELS <button id="addChannel">＋</button></div><div id="channelList"></div><div class="section-label voice-label">VOICE CHANNELS</div><button id="voiceJoin" class="voice-channel">◖ <span>Campfire</span><small id="voiceCount">0</small></button><div id="voiceMembers" class="voice-members"></div></div><div class="me"><div class="avatar me-avatar" id="myAvatar">Y</div><div class="me-info"><b id="myName">You</b><small>Online</small></div><button id="signout" title="Sign out">↪</button></div></aside><main class="chat"><header class="chat-head"><div><span class="hash">#</span><b id="channelName">general</b><p id="channelTopic">The place to start.</p></div><div class="head-actions"><span class="online-pill"><i></i> online</span><button id="membersToggle" title="Members">♙</button></div></header><section id="messages" class="messages"><div class="welcome"><div class="welcome-icon">✦</div><h2>Welcome to the fire.</h2><p>This is the beginning of <b>#general</b>. Say something nice.</p></div></section><div class="composer-wrap"><form id="composer" class="composer"><label class="attach" title="Send image or video">＋<input id="fileInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime" hidden></label><input id="messageInput" autocomplete="off" maxlength="4000" placeholder="Message #general"><button class="send" type="submit">↑</button></form><div id="uploadPreview" class="upload-preview"></div><div class="composer-hint">Images and videos up to 20 MB. Be kind. Bring snacks. 🔥</div></div></main><aside id="members" class="members"><div class="members-title">MEMBERS <span id="memberCount">1</span></div><div id="memberList"></div></aside></div><div id="friendModal" class="modal hidden"><div class="modal-card"><div class="modal-head"><h2>Friends & DMs</h2><button id="friendsClose">✕</button></div><form id="friendForm"><input id="friendUsername" placeholder="Add friend by username" maxlength="24"><button class="primary" type="submit">Send request</button></form><p class="modal-label">FRIEND REQUESTS</p><div id="friendRequests"></div><p class="modal-label">YOUR FRIENDS · select to DM</p><div id="friendList"></div><p id="friendError" class="error"></p></div></div><div id="toast" class="toast"></div><script src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#14151b">
+<title>Bonfire — hang out together</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+
+<!-- ============ AUTH ============ -->
+<div id="auth" class="auth hidden">
+  <canvas id="embers" class="embers" aria-hidden="true"></canvas>
+  <div class="auth-glow" aria-hidden="true"></div>
+  <div class="auth-card" id="authCard">
+    <div class="brand"><span class="flame-logo" aria-hidden="true">🔥</span><span>bonfire</span></div>
+    <p class="muted">Your people. Your place.</p>
+    <h1>Come hang out<span class="wiggle-dot">.</span></h1>
+    <label class="field">
+      <span>Username</span>
+      <input id="username" type="text" placeholder="3–24 letters, numbers or _" autocomplete="username" maxlength="24" spellcheck="false">
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input id="password" type="password" placeholder="8+ characters" autocomplete="current-password">
+    </label>
+    <div class="auth-actions">
+      <button id="signin" class="btn primary">Sign in</button>
+      <button id="signup" class="btn secondary">Create account</button>
+    </div>
+    <p id="authError" class="error" role="alert"></p>
+    <p class="tiny">New here? Pick a username and hit <b>Create account</b> — you'll land in the shared Bonfire server.</p>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app" class="app hidden">
+  <aside class="servers">
+    <div class="server-logo" data-tip="Bonfire">🔥</div>
+    <div class="rail-sep"></div>
+    <div id="serverList" class="server-list"></div>
+    <button id="addServer" class="server-add" data-tip="Create a server" aria-label="Create a server">＋</button>
+    <button id="joinServer" class="server-add join" data-tip="Join with an invite" aria-label="Join with an invite">↗</button>
+    <div class="server-bottom" data-tip="Connected"><i></i></div>
+  </aside>
+
+  <aside class="channels" id="channels">
+    <div class="workspace-head">
+      <div class="workspace-title">
+        <b id="serverName">Bonfire</b>
+        <small>your little corner of the internet</small>
+      </div>
+      <button id="invite" class="icon-btn" data-tip="Copy invite link" aria-label="Copy invite link">🔗</button>
+      <button id="friendsOpen" class="icon-btn" data-tip="Friends &amp; DMs" aria-label="Friends and DMs">👋<span id="friendBadge" class="badge hidden">0</span></button>
+    </div>
+    <div class="channel-scroll scroll">
+      <div class="section-label"><span>TEXT CHANNELS</span><button id="addChannel" class="mini-btn" data-tip="New channel" aria-label="New channel">＋</button></div>
+      <div id="channelList"></div>
+      <div class="section-label voice-label"><span>VOICE CHANNELS</span></div>
+      <button id="voiceJoin" class="voice-channel"><span class="voice-icon">🔊</span><span class="voice-name">Campfire</span><small id="voiceCount">0</small></button>
+      <div id="voiceMembers" class="voice-members"></div>
+    </div>
+    <div class="me">
+      <div class="avatar me-avatar" id="myAvatar">Y</div>
+      <div class="me-info"><b id="myName">You</b><small><i></i>Online</small></div>
+      <button id="soundToggle" class="icon-btn ghost" data-tip="Sounds" aria-label="Toggle sounds">🔈</button>
+      <button id="signout" class="icon-btn ghost" data-tip="Sign out" aria-label="Sign out">↪</button>
+    </div>
+  </aside>
+
+  <main class="chat">
+    <header class="chat-head">
+      <button id="menuToggle" class="icon-btn menu-btn" aria-label="Open channels">☰</button>
+      <div class="chat-title">
+        <div class="chat-name"><span class="hash" id="chatSigil">#</span><b id="channelName">general</b></div>
+        <p id="channelTopic">The place to start.</p>
+      </div>
+      <div class="head-actions">
+        <span class="online-pill"><i></i><span id="onlineText">online</span></span>
+        <button id="membersToggle" class="icon-btn" data-tip="Members" aria-label="Toggle members">👥</button>
+      </div>
+    </header>
+
+    <div class="messages-wrap">
+      <section id="messages" class="messages scroll" aria-live="polite"></section>
+      <button id="jumpBtn" class="jump-btn hidden" aria-label="Jump to latest messages"><span id="jumpText">Jump to latest</span> <b>↓</b></button>
+    </div>
+
+    <div class="composer-wrap">
+      <div id="typing" class="typing"></div>
+      <div id="uploadPreview" class="upload-preview"></div>
+      <form id="composer" class="composer">
+        <label class="attach" data-tip="Send an image or video" aria-label="Attach a file">＋<input id="fileInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime" hidden></label>
+        <textarea id="messageInput" rows="1" autocomplete="off" maxlength="4000" placeholder="Message #general"></textarea>
+        <button type="button" id="emojiBtn" class="emoji-btn" aria-label="Emoji">😊</button>
+        <button class="send" type="submit" aria-label="Send">➤</button>
+        <div id="emojiPop" class="emoji-pop hidden"></div>
+      </form>
+      <div class="composer-hint"><span><b>Enter</b> to send · <b>Shift+Enter</b> for a new line</span><span>Images &amp; videos up to 20 MB · bring snacks 🔥</span></div>
+    </div>
+  </main>
+
+  <aside id="members" class="members">
+    <div class="members-title">MEMBERS <span id="memberCount">1</span></div>
+    <div id="memberList" class="scroll member-scroll"></div>
+  </aside>
+  <div id="scrim" class="scrim"></div>
+</div>
+
+<!-- ============ FRIENDS MODAL ============ -->
+<div id="friendModal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head"><h2>Friends &amp; DMs 👋</h2><button id="friendsClose" class="icon-btn" aria-label="Close">✕</button></div>
+    <form id="friendForm" class="inline-form">
+      <input id="friendUsername" placeholder="Add a friend by username" maxlength="24" spellcheck="false">
+      <button class="btn primary" type="submit">Send</button>
+    </form>
+    <p id="friendError" class="error"></p>
+    <p class="modal-label">FRIEND REQUESTS</p>
+    <div id="friendRequests"></div>
+    <p class="modal-label">YOUR FRIENDS · tap to DM</p>
+    <div id="friendList"></div>
+  </div>
+</div>
+
+<!-- ============ ASK DIALOG (replaces prompt()) ============ -->
+<div id="askModal" class="modal hidden">
+  <form id="askForm" class="modal-card ask-card">
+    <div class="ask-emoji" id="askEmoji">✨</div>
+    <h2 id="askTitle">Name it</h2>
+    <p id="askHint" class="muted"></p>
+    <input id="askInput" maxlength="200" spellcheck="false">
+    <div class="auth-actions">
+      <button type="button" id="askCancel" class="btn secondary">Cancel</button>
+      <button type="submit" class="btn primary" id="askOk">Let's go</button>
+    </div>
+  </form>
+</div>
+
+<div id="tip" class="tip"></div>
+<div id="toast" class="toast" role="status"></div>
+<div id="fx" class="fx" aria-hidden="true"></div>
+<script src="/app.js"></script>
+</body>
+</html>
