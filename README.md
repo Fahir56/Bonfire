@@ -23,7 +23,7 @@ npm start
 - No Supabase required.
 - Chat, username/password accounts, servers, channels, invite links, and members are backed by PostgreSQL.
 - Every new account joins the shared `Bonfire` server (created on first signup).
-- Friend requests and accepted friendships; direct messages are restricted to friends.
+- Friend requests and accepted friendships. You can DM friends or anyone who shares a server with you (click a member or a message author to open a DM).
 - Image/video uploads are stored in PostgreSQL, limited to 20 MB per file. Supported: PNG, JPG, GIF, WebP, MP4, WebM, and MOV.
 - Voice is peer-to-peer mesh intended for small groups. Some networks require TURN infrastructure; without it, voice may fail for some users.
 - File/image uploads use PostgreSQL byte storage; large volumes of video can make the database grow quickly. For a public launch, use dedicated object storage (such as S3-compatible storage) and add rate limits and moderation.
