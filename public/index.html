@@ -52,10 +52,10 @@
 
   <aside class="channels" id="channels">
     <div class="workspace-head">
-      <div class="workspace-title">
-        <b id="serverName">Bonfire</b>
+      <button class="workspace-title" id="serverMenuBtn" aria-label="Server menu">
+        <b><span id="serverName">Bonfire</span> <span class="caret">▾</span></b>
         <small>your little corner of the internet</small>
-      </div>
+      </button>
       <button id="invite" class="icon-btn" data-tip="Copy invite link" aria-label="Copy invite link">🔗</button>
       <button id="friendsOpen" class="icon-btn" data-tip="Friends &amp; DMs" aria-label="Friends and DMs">👋<span id="friendBadge" class="badge hidden">0</span></button>
     </div>
@@ -65,10 +65,15 @@
       <div class="section-label voice-label"><span>VOICE CHANNELS</span></div>
       <button id="voiceJoin" class="voice-channel"><span class="voice-icon">🔊</span><span class="voice-name">Campfire</span><small id="voiceCount">0</small></button>
       <div id="voiceMembers" class="voice-members"></div>
+      <div class="section-label voice-label"><span>DIRECT MESSAGES</span><button id="newDM" class="mini-btn" data-tip="Find someone (Ctrl+K)" aria-label="Find someone">＋</button></div>
+      <div id="dmList" class="dm-list"></div>
     </div>
+    <div id="serverMenu" class="pop-menu hidden"></div>
+    <div id="notifPop" class="pop-menu notif-pop hidden"></div>
     <div class="me">
       <div class="avatar-wrap"><div class="avatar me-avatar" id="myAvatar">Y</div><i id="myDot" class="status-dot online"></i></div>
       <div class="me-info"><b id="myName">You</b><small id="myStatus" class="online">Online</small></div>
+      <button id="notifBtn" class="icon-btn ghost" data-tip="Notifications" aria-label="Notification settings">🔔</button>
       <button id="soundToggle" class="icon-btn ghost" data-tip="Sounds" aria-label="Toggle sounds">🔈</button>
       <button id="signout" class="icon-btn ghost" data-tip="Sign out" aria-label="Sign out">↪</button>
     </div>
@@ -94,15 +99,18 @@
 
     <div class="composer-wrap">
       <div id="typing" class="typing"></div>
+      <div id="replyBar" class="reply-bar"></div>
       <div id="uploadPreview" class="upload-preview"></div>
       <form id="composer" class="composer">
-        <label class="attach" data-tip="Send an image or video" aria-label="Attach a file">＋<input id="fileInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime" hidden></label>
+        <label class="attach" data-tip="Send a photo (10 MB) or video (30 MB)" aria-label="Attach a file">＋<input id="fileInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime" hidden></label>
         <textarea id="messageInput" rows="1" autocomplete="off" maxlength="4000" placeholder="Message #general"></textarea>
         <button type="button" id="emojiBtn" class="emoji-btn" aria-label="Emoji">😊</button>
         <button class="send" type="submit" aria-label="Send">➤</button>
         <div id="emojiPop" class="emoji-pop hidden"></div>
+        <div id="mentionPop" class="mention-pop hidden"></div>
+        <span id="charCount" class="char-count hidden"></span>
       </form>
-      <div class="composer-hint"><span><b>Enter</b> to send · <b>Shift+Enter</b> for a new line</span><span>Images &amp; videos up to 20 MB · bring snacks 🔥</span></div>
+      <div class="composer-hint"><span><b>Enter</b> send · <b>Shift+Enter</b> new line · <b>↑</b> edit last · <b>Ctrl+K</b> jump anywhere · <b>**bold**</b> <i>*italic*</i> <code>`code`</code> ||spoiler||</span><span id="limitHint">Photos up to 10 MB · videos up to 30 MB</span></div>
     </div>
   </main>
 
@@ -143,6 +151,23 @@
   </form>
 </div>
 
+<!-- ============ QUICK SWITCHER (Ctrl+K) ============ -->
+<div id="switcher" class="modal hidden">
+  <div class="modal-card switcher-card">
+    <input id="switchInput" placeholder="Where to? Type a #channel, @person or server" spellcheck="false" autocomplete="off">
+    <div id="switchList" class="switch-list scroll"></div>
+    <p class="switch-hint"><b>↑↓</b> move · <b>Enter</b> go · <b>Esc</b> close · start with <b>#</b> or <b>@</b> to filter</p>
+  </div>
+</div>
+
+<!-- ============ IMAGE LIGHTBOX ============ -->
+<div id="lightbox" class="lightbox hidden">
+  <img id="lightImg" alt="">
+  <div class="light-bar"><a id="lightOpen" target="_blank" rel="noopener">Open original ↗</a><button id="lightClose" class="icon-btn" aria-label="Close">✕</button></div>
+</div>
+
+<div id="reactPop" class="emoji-pop react-pop hidden"></div>
+<div id="notifStack" class="notif-stack" aria-live="polite"></div>
 <div id="tip" class="tip"></div>
 <div id="toast" class="toast" role="status"></div>
 <div id="fx" class="fx" aria-hidden="true"></div>
