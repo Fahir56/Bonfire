@@ -752,3 +752,128 @@ body{background:var(--bg);letter-spacing:.005em}
 
 .upload-cancel{flex-shrink:0;width:25px;height:25px;border-radius:7px;color:#c6bdc8;background:#ffffff10;font-size:11px}
 .upload-cancel:hover{background:#ff7a7a35;color:#fff}
+
+/* ========================================================================
+   SHIFT'S MANUAL RANK STUDIO — five distinct visual profile effects.
+   Ranks are cosmetic and are assigned exclusively through server-checked API.
+   ======================================================================== */
+.my-rank:empty{display:none}
+.me-info .my-rank{display:flex;margin:3px 0}
+.me-info .rank-badge{font-size:9px;padding:2px 6px}
+.admin-trigger{color:#ffd293!important;background:#f8ab4a1a!important;border:1px solid #f2aa6038!important}
+.admin-trigger:hover{background:#fbb6672b!important;box-shadow:0 0 18px #ffbe6c44}
+.rank-badge{display:inline-flex;align-items:center;justify-content:center;width:max-content;max-width:100%;gap:3px;border-radius:6px;padding:3px 7px;font-size:9px;line-height:1.15;font-weight:900;white-space:nowrap;letter-spacing:.035em;border:1px solid #fff2;text-transform:uppercase;flex-shrink:0}
+.rank-badge.rank-f{color:#b4bdcb;background:#737f9130;border-color:#9da8b45c}
+.rank-badge.rank-d{color:#ffcb9a;background:#fa8c4421;border-color:#f7a15a60;box-shadow:inset 0 0 12px #fa862414}
+.rank-badge.rank-b{color:#b2ecff;background:#2d9fda25;border-color:#51c8f56b;box-shadow:0 0 9px #27baff20}
+.rank-badge.rank-a{color:#f5dcff;background:linear-gradient(100deg,#7839b744,#e5ae4530);border-color:#d6a2f27d;box-shadow:0 0 13px #c674e740}
+.rank-badge.rank-t{color:#fff0cc;background:linear-gradient(120deg,#ffbf7955,#a86dff55,#61caff55,#ffbf7955);background-size:230% auto;border-color:#ffd5a2;box-shadow:0 0 15px #ffbe654f,inset 0 0 12px #fff3;animation:titan-shift 4.5s ease-in-out infinite}
+@keyframes titan-shift{0%,100%{background-position:0 0;filter:brightness(1)}50%{background-position:100% 0;filter:brightness(1.17)}}
+.avatar.rank-f{filter:grayscale(.7);box-shadow:0 0 0 2px #98a0ae99,0 0 12px #9ca4b744!important}
+.avatar.rank-d{box-shadow:0 0 0 2px #ffa361,0 0 13px #ff8f5055!important}
+.avatar.rank-b{box-shadow:0 0 0 2px #6ddaff,0 0 17px #4cbbf87d!important}
+.avatar.rank-a{box-shadow:0 0 0 2px #dba4ff,0 0 18px #e492ffad!important}
+.avatar.rank-t{box-shadow:0 0 0 2px #ffe5ac,0 0 16px #ffbb6faa,0 0 30px #b57ffb8b!important;animation:legend-pulse 3.2s ease-in-out infinite}
+@keyframes legend-pulse{0%,100%{box-shadow:0 0 0 2px #ffe5ac,0 0 14px #ffbb6faa,0 0 24px #b57ffb8b}50%{box-shadow:0 0 0 3px #fff1bc,0 0 22px #ffd186ed,0 0 36px #b57ffbd1}}
+.author.rank-f{color:#b5beca!important}
+.author.rank-d{color:#ffbd7f!important}
+.author.rank-b{color:#82d9fd!important;text-shadow:0 0 10px #40aeea66}
+.author.rank-a{color:#edcbff!important;text-shadow:0 0 11px #d78aff9a}
+.author.rank-t{background:linear-gradient(90deg,#ffe2a2,#edb8ff,#9ae6ff,#ffe2a2);background-size:220% auto;background-clip:text;-webkit-background-clip:text;color:transparent!important;animation:titan-shift 4s linear infinite;text-shadow:none!important}
+.message-meta .rank-badge{font-size:8px;padding:2px 5px;vertical-align:middle}
+.member-identity{display:flex;align-items:flex-start;min-width:0;flex:1;flex-direction:column;gap:3px}
+.member-identity>span:first-child{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.member-identity .rank-badge{font-size:8px;padding:2px 5px}
+.dm-item .rank-badge{font-size:7px;margin-left:auto;padding:2px 4px}
+.member .dm-hint{margin-left:auto}
+.me-info #myName{cursor:pointer}
+.me-info #myName:hover{color:#ffd6ae}
+
+/* Expanded profile card: framed aura, rank effects, and local secret achievement. */
+.profile-modal-card{width:min(510px,100%);overflow:hidden}
+.profile-modal-card .modal-head{margin-bottom:16px}
+.profile-contents{min-height:280px}
+.profile-hero{position:relative;isolation:isolate;overflow:hidden;border:1px solid #ffffff20;border-radius:22px;padding:30px 20px 22px;text-align:center;background:radial-gradient(ellipse at top,#33394d,#1b1e2c 68%);transition:background .3s}
+.profile-hero .profile-light{position:absolute;z-index:-1;pointer-events:none;inset:-30%;opacity:.35;background:radial-gradient(ellipse at 50% 16%,#aebbd7b5,transparent 58%)}
+.profile-hero.rank-f{background:radial-gradient(ellipse at top,#3a3b43,#1d2029 72%);border-color:#a9b5bf70}
+.profile-hero.rank-f .profile-light{background:radial-gradient(ellipse at top,#b9bdca93,transparent 60%)}
+.profile-hero.rank-d{background:radial-gradient(ellipse at top,#4d302c,#1b1f2b 72%);border-color:#f4a06e7d}
+.profile-hero.rank-d .profile-light{background:radial-gradient(ellipse at top,#f8a361aa,transparent 60%)}
+.profile-hero.rank-b{background:radial-gradient(ellipse at top,#23495c,#182335 72%);border-color:#79dbff99;box-shadow:inset 0 0 35px #0eaffb18}
+.profile-hero.rank-b .profile-light{background:radial-gradient(ellipse at top,#32c8fbb3,transparent 60%)}
+.profile-hero.rank-a{background:radial-gradient(ellipse at top,#513a68,#292036 78%);border-color:#dcb5ffae;box-shadow:inset 0 0 40px #c474ff22,0 0 20px #d685e52b}
+.profile-hero.rank-a .profile-light{background:radial-gradient(ellipse at top,#f6c4ffb3,transparent 60%)}
+.profile-hero.rank-t{background:linear-gradient(140deg,#3f2b45,#252f4a 44%,#4d3340);border-color:#ffd6a9;box-shadow:0 0 25px #ffd28f49,inset 0 0 28px #e2c3ff42}
+.profile-hero.rank-t::before{content:'';position:absolute;inset:-100%;z-index:-1;background:conic-gradient(from 0deg,#ffb85b00,#ffc36355,#ac95ff00,#68d3fe50,#ffbb7500);animation:rotate-titan 10s linear infinite;opacity:.48}
+@keyframes rotate-titan{to{transform:rotate(360deg)}}
+.profile-hero.rank-t .profile-light{background:radial-gradient(ellipse at top,#efacffad,transparent 62%)}
+.profile-crest{position:absolute;right:20px;top:12px;font-size:29px;opacity:.45;color:#ffe3bc}
+.profile-avatar{width:100px;height:100px;font-size:40px;margin:12px auto 22px;border:5px solid #ffffff22;box-shadow:0 0 36px #fff2}
+.profile-hero h3{font:800 27px 'Space Grotesk',system-ui,sans-serif;margin:0;letter-spacing:-.6px;color:#fff}
+.profile-handle{color:#b6aec6;font-size:13px;margin:5px 0 18px}
+.profile-hero .rank-badge{font-size:12px;padding:7px 13px;margin:auto;border-radius:10px}
+.profile-unranked{display:inline-block;border-radius:9px;border:1px dashed #a8b5ca66;color:#bbc2d1;padding:6px 11px;font-size:11px}
+.profile-subtitle{color:#ddd5e2;font-size:13px;margin:13px 0 20px}
+.profile-metadata{display:flex;justify-content:space-between;gap:8px;border-top:1px solid #fff2;padding-top:14px;color:#c4c2cb;font-size:10px;text-align:left}
+.secret-achievement{display:block;color:#ffdcaa;background:#ffa94314;border:1px solid #ffb86955;border-radius:9px;padding:8px;margin-top:14px;font-size:11px;font-weight:800}
+.profile-buttons{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.profile-buttons .btn{flex:1;min-width:150px}
+
+/* Shift-only control room */
+.admin-panel{width:min(780px,100%);max-height:min(91vh,860px);overflow-y:auto;padding:24px;background:linear-gradient(155deg,#262331,#191b27 70%);border:1px solid #ffbf7b4d;box-shadow:0 30px 100px #000c,0 0 40px #ff9e3920}
+.admin-eyebrow{margin:0 0 7px;color:#e6b479;font:900 10px 'DM Sans',system-ui,sans-serif;letter-spacing:.15em}
+.admin-panel .modal-head h2{font-size:29px;letter-spacing:-.75px}
+.admin-lead{font-size:13px;color:#bfb8c8;line-height:1.55;margin:0 0 16px}
+.admin-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:15px 0}
+.admin-stats>div{border-radius:15px;padding:14px;background:#ffffff09;border:1px solid #ffffff10}
+.admin-stats strong{display:block;font:800 24px 'Space Grotesk',sans-serif;color:#ffd4ac}
+.admin-stats small{color:#a9a7b6;font-size:10px;letter-spacing:.04em}
+.rank-legend{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0 17px}
+.rank-legend .rank-badge{font-size:10px;padding:6px 8px}
+.admin-filter{display:flex;gap:9px;align-items:center;border:1px solid #ffffff2b;border-radius:11px;background:#0c111b;padding:0 13px}
+.admin-filter>span{font-size:24px;color:#edb37c}
+.admin-filter input{padding:12px 0;border:0!important;box-shadow:none!important;background:transparent;width:100%;color:#fff;outline:none;transform:none!important}
+.admin-users{min-height:110px;max-height:340px;overflow:auto;margin-top:12px;padding:2px 4px 2px 0}
+.admin-loading{text-align:center;color:#a5a1b3;font-size:13px;padding:24px}
+.admin-user{display:flex;align-items:center;gap:12px;min-width:0;padding:12px;border:1px solid #ffffff15;border-radius:13px;background:#ffffff07;margin-bottom:7px}
+.admin-user .avatar{flex-shrink:0}
+.admin-user-details{display:flex;flex:1;min-width:0;flex-direction:column;align-items:flex-start;gap:3px}
+.admin-user-details strong{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f7edf2;font-size:13px}
+.admin-user-details small{color:#959aad;font-size:11px}
+.admin-user-details .rank-badge{margin-top:2px;font-size:8px}
+.admin-select-label{display:flex;flex-direction:column;gap:5px;align-items:flex-end;flex-shrink:0}
+.admin-select-label>span{font-size:9px;color:#959bad;font-weight:900;letter-spacing:.07em}
+.admin-select-label select{color:#ffe0bc;padding:8px 27px 8px 10px;font-size:12px;font-weight:700;border-radius:9px;border:1px solid #ffd19960;background:#33303b;cursor:pointer;max-width:165px}
+.admin-select-label select option{color:#fff;background:#222532}
+.admin-select-label select:disabled{opacity:.55}
+.admin-pager{display:flex;align-items:center;gap:9px;justify-content:flex-end;margin-top:12px}
+.admin-pager span{flex:1;font-size:11px;color:#a4a3af}
+.admin-pager .btn{font-size:11px;padding:8px 10px}
+.admin-pager .btn:disabled{opacity:.35;cursor:default}
+.rank-history{margin-top:14px;border-top:1px solid #ffffff1b;padding-top:12px}
+.rank-history summary{font-size:12px;color:#cfc1d2;cursor:pointer;font-weight:800}
+.rank-log{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:9px 2px;border-bottom:1px solid #fff1;font-size:11px;color:#d9d4df}
+.rank-log b{color:#ffd5ad}
+.rank-log time{margin-left:auto;color:#9599aa;font-size:10px}
+.hidden-flame-awake .server-logo{box-shadow:0 0 25px #ffc27f,0 0 55px #ef8bff!important;animation:legend-pulse 1.5s infinite!important}
+.hidden-flame-awake .chat-head{background:linear-gradient(100deg,#492d37,#2a2e53,#4e3337)!important;transition:background 1s}
+@media(max-width:680px){
+  .admin-panel{padding:15px;max-height:94vh}
+  .admin-panel .modal-head h2{font-size:23px}
+  .admin-stats>div{padding:10px}
+  .admin-stats strong{font-size:20px}
+  .rank-legend{gap:4px}
+  .rank-legend .rank-badge{font-size:8px;padding:5px 6px}
+  .admin-user{gap:8px;padding:9px}
+  .admin-user .avatar{width:30px;height:30px;font-size:12px}
+  .admin-select-label select{max-width:130px;font-size:11px}
+  .profile-hero{padding:22px 13px}
+  .profile-modal-card{padding:14px}
+  .message-meta .rank-badge{font-size:7px;max-width:90px;overflow:hidden;text-overflow:ellipsis}
+}
+@media(prefers-reduced-motion:reduce){
+  .rank-badge.rank-t,.avatar.rank-t,.author.rank-t,.profile-hero.rank-t::before,.hidden-flame-awake .server-logo{animation:none!important}
+}
+
+.profile-copy-id{display:block;margin:12px auto 0;background:#ffffff12;border:1px solid #fff2;border-radius:8px;padding:6px 9px;font-size:10px;color:#ccc8d6}
+.profile-copy-id:hover{background:#ffffff21;color:#fff}

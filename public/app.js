@@ -18,6 +18,12 @@ const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const palette = ['#8c6eb3', '#d07a4f', '#4f93a3', '#c4607f', '#5e9e6b', '#b0894a', '#6a7fd0', '#c76ad0'];
 const EMOJIS = ['🔥', '😂', '🥹', '😭', '💀', '🤝', '👀', '✨', '❤️', '👍', '🎉', '🙏', '😎', '🤔', '😤', '🥳', '🫡', '😴', '🍕', '🌭', '🍿', '🐸', '🦆', '💯'];
 const QUICK_REACTS = ['❤️', '😂', '🔥'];
+const RANK_META = Object.freeze({F:{label:'F • ASH',title:'Ash',tagline:'The quiet ember',icon:'◈'},D:{label:'D • EMBER',title:'Ember',tagline:'The fire begins',icon:'✦'},B:{label:'B • BLAZE',title:'Blaze',tagline:'The flame gets brighter',icon:'✹'},A:{label:'A • NOVA',title:'Nova',tagline:'A rare rising star',icon:'✧'},T:{label:'T • TITAN',title:'Titan',tagline:'Legend of the bonfire',icon:'✺'}});
+const knownRanks = new Map();
+const validRank = rank => RANK_META[rank] ? rank : null;
+function rankFor(id) { return validRank(knownRanks.get(id) || (id===user?.id ? user.profile_rank : null) || members.find(m=>m.id===id)?.profile_rank || dmList.find(d=>d.id===id)?.profile_rank); }
+function badgeFor(rank) { rank=validRank(rank); return rank ? `<span class="rank-badge rank-${rank.toLowerCase()}" title="Manually awarded ${rank} rank">${RANK_META[rank].icon} ${RANK_META[rank].label}</span>` : ''; }
+function rankCss(rank) { rank=validRank(rank); return rank ? ' rank-'+rank.toLowerCase() : ''; }
 let limits = { fileMaxMB: 30, photoMaxMB: 30, videoMaxMB: 30, audioMaxMB: 30, photoHours: 72, videoHours: 12, audioHours: 72, fileHours: 72, messageDays: 90 };
 const input = $('messageInput');
 
@@ -32,8 +38,8 @@ function initials(s) { return [...(s || '?').trim()][0]?.toUpperCase() || '?' }
 function safe(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])) }
 function time(s) { return new Date(s).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
 function colorFor(s) { let h = 0; for (const c of String(s || '?')) h = (h * 31 + c.codePointAt(0)) >>> 0; return palette[h % palette.length] }
-function avatar(name, cls = 'avatar', attrs = '') { return `<div class="${cls}" ${attrs} style="background:${colorFor(name)}">${safe(initials(name))}</div>` }
-function avatarWithStatus(name, id) { const st = statusOf(id); return `<div class="avatar-wrap">${avatar(name)}<i class="status-dot ${st}" data-presence="${safe(id)}" data-tip="${STATUS_TIP[st]}"></i></div>` }
+function avatar(name, cls = 'avatar', attrs = '', rank = null) { return `<div class="${cls}${rankCss(rank)}" ${attrs} style="background:${colorFor(name)}">${safe(initials(name))}</div>` }
+function avatarWithStatus(name, id) { const st = statusOf(id); return `<div class="avatar-wrap">${avatar(name,'avatar','',rankFor(id))}<i class="status-dot ${st}" data-presence="${safe(id)}" data-tip="${STATUS_TIP[st]}"></i></div>` }
 function dayKey(d) { return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate() }
 function dayLabel(d) {
   const today = new Date(), y = new Date(); y.setDate(today.getDate() - 1);
@@ -223,7 +229,11 @@ function showAuth() { $('auth').classList.remove('hidden'); startEmbers(); setTi
 /* ---------- boot ---------- */
 async function boot() {
   try {
-    if (!user) user = (await api('/api/me')).user;
+    user = (await api('/api/me')).user;
+    if (user.profile_rank) knownRanks.set(user.id,validRank(user.profile_rank));
+    $('adminOpen').classList.toggle('hidden', !user.is_admin);
+    $('myAvatar').className='avatar me-avatar'+rankCss(user.profile_rank);
+    renderMyRank();
     $('auth').classList.add('hidden'); $('app').classList.remove('hidden');
     $('myName').textContent = user.display_name; $('myAvatar').textContent = initials(user.display_name); $('myAvatar').style.background = colorFor(user.display_name);
     lastRead = load('bonfireRead:' + user.id, {}); drafts = load('bonfireDrafts:' + user.id, {});
@@ -253,6 +263,7 @@ async function boot() {
     socket.on('typing', onTyping);
     socket.on('presence:update', ({ userId, status }) => setPresence(userId, status));
     socket.on('app:error', toast);
+    socket.on('user:rank-updated', onRankUpdated);
     socket.on('voice:peer-joined', peerJoined); socket.on('voice:peer-left', peerLeft); socket.on('voice:signal', handleSignal);
     if (matchMedia('(max-width:1000px)').matches) $('app').classList.add('no-members');
     await loadDMs();
@@ -470,8 +481,8 @@ function buildArticle(m, prev, animate = false) {
     : (m.content ? `<div class="message-text${jumbo ? ' jumbo' : ''}">${format(m.content)}${m.edited_at ? `<span class="edited" title="Edited ${safe(new Date(m.edited_at).toLocaleString())}">(edited)</span>` : ''}</div>` : '');
   const canDelete = mine || (view?.kind === 'channel' && activeServer?.owner_id === user.id);
   el.innerHTML = reply +
-    (compact ? `<time class="stamp" title="${safe(at.toLocaleString())}">${time(m.created_at)}</time>` : avatar(n, 'avatar author', who)) +
-    `<div class="message-body">${compact ? '' : `<div class="message-meta"><b class="author" ${who}>${safe(n)}</b><time title="${safe(at.toLocaleString())}">${time(m.created_at)}</time></div>`}${body}${media}${reactionsHTML(m)}</div>` +
+    (compact ? `<time class="stamp" title="${safe(at.toLocaleString())}">${time(m.created_at)}</time>` : avatar(n, 'avatar author', who, m.profile_rank || rankFor(m.user_id))) +
+    `<div class="message-body">${compact ? '' : `<div class="message-meta"><b class="author${rankCss(m.profile_rank || rankFor(m.user_id))}" ${who}>${safe(n)}</b>${badgeFor(m.profile_rank || rankFor(m.user_id))}<time title="${safe(at.toLocaleString())}">${time(m.created_at)}</time></div>`}${body}${media}${reactionsHTML(m)}</div>` +
     `<div class="msg-actions">${QUICK_REACTS.map(e => `<button data-act="quick" data-emoji="${e}" data-tip="React ${e}">${e}</button>`).join('')}<button data-act="react" data-tip="More reactions">😀</button><button data-act="reply" data-tip="Reply">↩️</button>${mine ? '<button data-act="edit" data-tip="Edit">✏️</button>' : ''}${m.content ? '<button data-act="copy" data-tip="Copy text">📋</button>' : ''}${canDelete ? '<button data-act="delete" class="danger" data-tip="Delete (Shift+click skips the check)">🗑️</button>' : ''}</div>`;
   el.querySelectorAll('img.message-media,video.message-media,audio.inline-audio').forEach(x => {
     x.addEventListener(x.tagName === 'IMG' ? 'load' : 'loadedmetadata', () => { if (stickToBottom) scrollBottom() }, { once: true });
@@ -968,7 +979,7 @@ async function loadMembers(animate = true) {
   try {
     const serverId = activeServer.id, d = await api(`/api/servers/${serverId}/members`);
     if (serverId !== activeServer?.id) return;
-    members = d.members; d.members.forEach(m => { if (m.id !== user.id) presence.set(m.id, m.status) });
+    members = d.members; d.members.forEach(m => { knownRanks.set(m.id, validRank(m.profile_rank)); if (m.id !== user.id) presence.set(m.id, m.status) });
     renderMembers(animate);
   } catch { }
 }
@@ -981,7 +992,7 @@ function renderMembers(animate = false) {
   $('memberCount').textContent = members.length;
   $('memberList').innerHTML = Object.entries(groups).filter(([, list]) => list.length).map(([st, list]) =>
     `<div class="member-group">${STATUS_LABEL[st].toUpperCase()} — ${list.length}</div>` +
-    list.map(m => `<div class="member ${st}" data-user="${safe(m.id)}" data-name="${safe(m.display_name)}" data-username="${safe(m.username || '')}" style="animation-delay:${Math.min(i++, 15) * 35}ms">${avatarWithStatus(m.display_name, m.id)}<span>${safe(m.display_name)}${m.id === user.id ? ' <em>(you)</em>' : ''}${st === 'afk' ? '<span class="zzz">💤</span>' : ''}</span>${m.id === user.id ? '' : '<span class="dm-hint">💬</span>'}</div>`).join('')
+    list.map(m => `<div class="member ${st}" data-user="${safe(m.id)}" data-name="${safe(m.display_name)}" data-username="${safe(m.username || '')}" style="animation-delay:${Math.min(i++, 15) * 35}ms">${avatarWithStatus(m.display_name, m.id)}<span class="member-identity"><span>${safe(m.display_name)}${m.id === user.id ? ' <em>(you)</em>' : ''}${st === 'afk' ? '<span class="zzz">💤</span>' : ''}</span>${badgeFor(m.profile_rank)}</span>${m.id === user.id ? '' : '<span class="dm-hint">💬</span>'}</div>`).join('')
   ).join('');
   renderOnlinePill();
 }
@@ -1001,9 +1012,7 @@ $('scrim').onclick = closeDrawers;
 /* Click anyone (member list, message avatar or name, @mention) to jump into a DM with them */
 function openUser(id, name, username) {
   if (!id) return;
-  if (id === user.id) { toast("That's you! Talking to yourself is free though 🪞"); return }
-  const m = members.find(x => x.id === id) || dmList.find(x => x.id === id);
-  openDM({ id, display_name: name || m?.display_name || 'friend', username: username || m?.username || name || m?.display_name });
+  openProfile(id);
 }
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-user]'); if (!t) return;
@@ -1011,14 +1020,14 @@ document.addEventListener('click', e => {
 });
 async function loadDMs() {
   try {
-    const d = await api('/api/dms'); dmList = d.conversations;
+    const d = await api('/api/dms'); dmList = d.conversations; d.conversations.forEach(c=>knownRanks.set(c.id,validRank(c.profile_rank)));
     for (const c of dmList) { presence.set(c.id, c.status); noteActivity('d:' + c.id, c.last_message_at, true) }
     save('bonfireRead:' + user.id, lastRead); renderDMList();
   } catch { }
 }
 function renderDMList() {
   $('dmList').innerHTML = dmList.length
-    ? dmList.map(c => `<button class="dm-item${view?.kind === 'dm' && view.id === c.id ? ' active' : ''}" data-open-dm="${safe(c.id)}">${avatarWithStatus(c.display_name, c.id)}<span>${safe(c.display_name)}</span></button>`).join('')
+    ? dmList.map(c => `<button class="dm-item${view?.kind === 'dm' && view.id === c.id ? ' active' : ''}" data-open-dm="${safe(c.id)}">${avatarWithStatus(c.display_name, c.id)}<span>${safe(c.display_name)}</span>${badgeFor(c.profile_rank)}</button>`).join('')
     : '<p class="dm-empty">Click anyone to start a DM 💬</p>';
   renderUnread();
 }
@@ -1250,13 +1259,15 @@ document.addEventListener('keydown', e => {
     if (!$('switcher').classList.contains('hidden')) return closeSwitcher();
     if (!$('searchModal').classList.contains('hidden')) return closeSearch();
     if (!$('friendModal').classList.contains('hidden')) return closeFriends();
+    if (!$('profileModal').classList.contains('hidden')) return closeProfile();
+    if (!$('adminModal').classList.contains('hidden')) return closeAdmin();
     closePopovers(); closeDrawers(); return;
   }
   // Start typing anywhere and it lands in the message box
   const el = document.activeElement, typingTarget = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
   if (user && !typingTarget && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && !$('app').classList.contains('hidden') && document.querySelectorAll('.modal:not(.hidden)').length === 0) input.focus();
 });
-document.querySelector('.server-logo').addEventListener('click', e => sparks(e.clientX || 38, e.clientY || 38, 14, { emoji: '🔥', spread: 1.8 }));
+document.querySelector('.server-logo').addEventListener('click', onSecretFlameTap);
 $('myAvatar').addEventListener('click', e => sparks(e.clientX, e.clientY, 12, { emoji: ['✨', '⭐', '💫'], spread: 1.5 }));
 
 /* ---------- voice: small-group peer-to-peer. Restrictive networks may need a TURN server. ---------- */
@@ -1312,6 +1323,140 @@ function leaveVoice() {
   $('voiceMembers').innerHTML = ''; $('voiceCount').textContent = '0';
 }
 $('voiceJoin').onclick = joinVoice;
+
+/* ========================================================================
+   MANUAL RANKS • public profiles • verified Shift-only rank studio
+   ======================================================================== */
+function renderMyRank() {
+  if(!user)return;
+  const r=rankFor(user.id);
+  $('myRank').innerHTML=badgeFor(r);
+  $('myAvatar').className='avatar me-avatar'+rankCss(r);
+}
+function onRankUpdated({userId,rank}={}) {
+  if(!userId)return;
+  rank=validRank(rank);
+  knownRanks.set(userId,rank);
+  members.forEach(m=>{if(m.id===userId)m.profile_rank=rank});
+  dmList.forEach(m=>{if(m.id===userId)m.profile_rank=rank});
+  if(view) view.msgs.forEach(m=>{if(m.user_id===userId)m.profile_rank=rank});
+  if(userId===user.id){user.profile_rank=rank;renderMyRank()}
+  if(members.length)renderMembers();
+  renderDMList();
+  if(view)rerenderKeepScroll();
+  if(profileOpenId===userId)openProfile(userId);
+  if(user.is_admin && !$('adminModal').classList.contains('hidden'))loadAdmin();
+}
+let profileOpenId=null;
+async function openProfile(id) {
+  if(!id)return;
+  profileOpenId=id;
+  $('profileModal').classList.remove('hidden');
+  $('profileContents').innerHTML='<p class="muted">Fetching profile…</p>';
+  $('profileMessage').classList.add('hidden');
+  $('profileManage').classList.add('hidden');
+  try {
+    const d=await api('/api/users/'+encodeURIComponent(id)+'/profile');
+    if(profileOpenId!==id)return;
+    const p=d.profile,rank=validRank(p.profile_rank),meta=rank&&RANK_META[rank];
+    knownRanks.set(p.id,rank);
+    const date=new Date(p.created_at);
+    $('profileContents').innerHTML=`<div class="profile-hero${rankCss(rank)}">
+      <div class="profile-light"></div><span class="profile-crest">${rank?meta.icon:'✦'}</span>
+      ${avatar(p.display_name,'avatar profile-avatar','',rank)}
+      <h3>${safe(p.display_name)}</h3><p class="profile-handle">@${safe(p.username)}</p>
+      ${rank?badgeFor(rank):'<span class="profile-unranked">Unranked • a fresh spark</span>'}
+      <p class="profile-subtitle">${meta?meta.tagline:'Every legend starts somewhere.'}</p>
+      <div class="profile-metadata"><span>Joined ${Number.isFinite(date.getTime())?date.toLocaleDateString([], {month:'short',year:'numeric'}):'Bonfire'}</span><span>${rank?'Personally graded by Shift':'No rank assigned'}</span></div>
+      ${id===user.id ? '<button id="copyProfileId" class="profile-copy-id" type="button">Copy my account ID</button>' : ''}
+      ${id===user.id && secretUnlocked() ? '<span class="secret-achievement">✺ Sparkkeeper • Hidden Flame unlocked</span>' : ''}
+    </div>`;
+    if(id===user.id) $('copyProfileId').onclick=()=>navigator.clipboard.writeText(p.id).then(()=>toast('Account ID copied')).catch(()=>toast('Your account ID: '+p.id));
+    $('profileMessage').classList.toggle('hidden',id===user.id);
+    $('profileMessage').onclick=()=>{closeProfile();openDM({id:p.id,display_name:p.display_name,username:p.username})};
+    $('profileManage').classList.toggle('hidden',!user.is_admin);
+    $('profileManage').onclick=()=>{closeProfile();openAdmin('@'+p.username)};
+  }catch(e){if(profileOpenId===id)$('profileContents').innerHTML=`<p class="error">${safe(e.message)}</p>`;}
+}
+function closeProfile(){profileOpenId=null;$('profileModal').classList.add('hidden')}
+$('profileClose').onclick=closeProfile;
+$('profileModal').onclick=e=>{if(e.target===$('profileModal'))closeProfile()};
+$('myName').addEventListener('click',()=>{if(user)openProfile(user.id)});
+$('myAvatar').addEventListener('dblclick',()=>{if(user)openProfile(user.id)});
+
+let adminOffset=0, adminResults=[], adminLastSearch='', adminTicket=0, adminDelay;
+function openAdmin(q='') {
+  if(!user?.is_admin)return;
+  $('adminModal').classList.remove('hidden');
+  $('adminSearch').value=q.replace(/^@/,'');
+  adminOffset=0;loadAdmin();
+  $('adminSearch').focus();
+}
+function closeAdmin(){adminTicket++;$('adminModal').classList.add('hidden')}
+$('adminOpen').onclick=()=>openAdmin();
+$('adminClose').onclick=closeAdmin;
+$('adminModal').onclick=e=>{if(e.target===$('adminModal'))closeAdmin()};
+$('adminSearch').addEventListener('input',()=>{clearTimeout(adminDelay);adminOffset=0;adminDelay=setTimeout(()=>loadAdmin(),220)});
+$('adminPrev').onclick=()=>{adminOffset=Math.max(0,adminOffset-50);loadAdmin()};
+$('adminNext').onclick=()=>{adminOffset+=50;loadAdmin()};
+async function loadAdmin(){
+  if(!user?.is_admin||$('adminModal').classList.contains('hidden'))return;
+  const ticket=++adminTicket,q=$('adminSearch').value.trim();
+  $('adminError').textContent='';
+  $('adminUsers').innerHTML='<p class="admin-loading">Gathering campfire profiles…</p>';
+  try{
+    const d=await api('/api/admin/users?q='+encodeURIComponent(q)+'&offset='+adminOffset);
+    if(ticket!==adminTicket)return;
+    adminResults=d.users;
+    adminLastSearch=q;
+    d.users.forEach(x=>knownRanks.set(x.id,validRank(x.profile_rank)));
+    const counts=Object.fromEntries(d.counts.map(x=>[x.rank,x.amount]));
+    $('adminStats').innerHTML=`<div><strong>${Object.values(counts).reduce((a,b)=>a+b,0)}</strong><small>Total people</small></div><div><strong>${Object.entries(counts).filter(([k])=>k!=='NONE').reduce((sum,[,v])=>sum+v,0)}</strong><small>Ranked</small></div><div><strong>${counts.T||0}</strong><small>Legends (T)</small></div>`;
+    $('adminUsers').innerHTML=d.users.length?d.users.map(x=>`<div class="admin-user${rankCss(x.profile_rank)}" data-admin-id="${safe(x.id)}">
+      ${avatar(x.display_name,'avatar','',x.profile_rank)}
+      <div class="admin-user-details"><strong>${safe(x.display_name)}</strong><small>@${safe(x.username)}</small>${badgeFor(x.profile_rank)}</div>
+      <label class="admin-select-label"><span>MANUAL RANK</span><select data-admin-rank="${safe(x.id)}" aria-label="Assign rank to ${safe(x.username)}">
+        ${[['','None'],['F','F • Ash'],['D','D • Ember'],['B','B • Blaze'],['A','A • Nova'],['T','T • Titan']].map(([v,label])=>`<option value="${v}" ${v===(x.profile_rank||'')?'selected':''}>${label}</option>`).join('')}
+      </select></label></div>`).join(''):'<p class="admin-loading">No matching people. Try another name.</p>';
+    $('adminPaging').textContent=d.total?`Showing ${adminOffset+1}–${Math.min(d.total,adminOffset+d.users.length)} of ${d.total}`:'0 people';
+    $('adminPrev').disabled=adminOffset===0;
+    $('adminNext').disabled=adminOffset+d.users.length>=d.total;
+    $('adminHistory').innerHTML=d.history.length?d.history.map(h=>`<div class="rank-log"><b>@${safe(h.target_username)}</b><span>${h.old_rank||'None'} → ${h.new_rank||'None'}</span><time>${new Date(h.created_at).toLocaleString()}</time></div>`).join(''):'<p class="muted">No ranks changed yet.</p>';
+  }catch(e){if(ticket!==adminTicket)return;$('adminError').textContent=e.message;$('adminUsers').innerHTML='';}
+}
+$('adminUsers').addEventListener('change',async e=>{
+  const select=e.target.closest('select[data-admin-rank]');if(!select||!user?.is_admin)return;
+  const id=select.dataset.adminRank, entry=adminResults.find(x=>x.id===id);
+  if(!entry)return;
+  const old=entry.profile_rank||'',next=select.value||null;
+  select.disabled=true;
+  try{
+    const d=await api('/api/admin/users/'+encodeURIComponent(id)+'/rank',{method:'PATCH',body:JSON.stringify({rank:next})});
+    entry.profile_rank=d.rank;
+    onRankUpdated({userId:id,rank:d.rank});
+    toast(`${entry.display_name} ${d.rank?`received ${d.rank} rank`:'is unranked'} ✦`);
+    if(!$('adminModal').classList.contains('hidden'))loadAdmin();
+  }catch(err){select.value=old;$('adminError').textContent=err.message;toast('Rank change failed');}
+  finally{select.disabled=false}
+});
+
+/* Secret for all users: tap the Bonfire logo seven times in a short burst. */
+let flameTaps=0, flameTimer=0;
+function secretUnlocked(){if(!user)return false;try{return localStorage.getItem('bonfireSparkkeeper:'+user.id)==='yes'}catch{return false}}
+function onSecretFlameTap(e){
+  sparks(e.clientX||38,e.clientY||38,14,{emoji:'🔥',spread:1.8});
+  if(!user)return;
+  if(Date.now()-flameTimer>4000)flameTaps=0;
+  flameTimer=Date.now();flameTaps++;
+  if(flameTaps<7)return;
+  flameTaps=0;
+  try{localStorage.setItem('bonfireSparkkeeper:'+user.id,'yes')}catch{}
+  document.body.classList.add('hidden-flame-awake');
+  const b=document.querySelector('.server-logo').getBoundingClientRect();
+  sparks(b.left+b.width/2,b.top+b.height/2,65,{emoji:['🔥','✨','🌟','💫'],spread:5});
+  toast('✺ SECRET UNLOCKED: Sparkkeeper — The Hidden Flame!');
+  setTimeout(()=>document.body.classList.remove('hidden-flame-awake'),12500);
+}
 
 /* ---------- start ---------- */
 (async () => {
