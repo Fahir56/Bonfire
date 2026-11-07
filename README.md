@@ -13,6 +13,33 @@ A full-stack Express + Socket.IO + PostgreSQL chat app with realtime channels, D
 - **UI refresh**: calmer dark palette, more legible message layouts, better sidebar/composer styling, polished player and file previews, responsive/mobile adjustments, keyboard focus outlines, reduced-motion support.
 - **Safer file handling**: unknown and potentially active file formats are delivered as `application/octet-stream` with `Content-Disposition: attachment` and `nosniff`. Uploaded filenames are sanitized. Retrieval requires login **and** access as owner/channel member/DM participant.
 
+## Shift's admin panel + manually awarded profile ranks (new in v2.1)
+
+Only the **real, pre-existing `shift` account** gets the crown (👑) control-room button after you configure its permanent account ID. Grades are **never earned or calculated automatically**: Shift personally assigns them from the admin panel, may change them at any time, and can clear them back to `None`.
+
+| Rank | Profile effect |
+|---|---|
+| F — Ash | Subtle grey badge, desaturated avatar and slate border |
+| D — Ember | Soft orange glow and warm badge |
+| B — Blaze | Vibrant blue halo and electric-blue username |
+| A — Nova | Bright violet aura, shimmer badge and glowing name |
+| T — Titan | Animated, prismatic golden border, radiant aura and iridescent name |
+
+Ranks display on everyone's profile panel, the server member list, their messages and DM list. Click another user's name/avatar to see their full profile, then **Send a message** if wanted. Shift's rank studio includes searching, paging, rank counts, and a history of recent changes. Only verified Shift can access the admin API, not just the button.
+
+### One-time secure setup for @shift
+
+1. **Create the username `shift` yourself if you haven't already.** Don't let an untrusted person register it. If a `shift` account already exists, confirm it belongs to you.
+2. Sign into that account on Bonfire, click your name at the bottom-left to open your profile, and click **Copy my account ID**.
+3. In your Render web service's **Environment** settings, add `SHIFT_ADMIN_USER_ID` with that exact UUID as its value. Save and redeploy. The `render.yaml` blueprint also declares this secret/config input.
+4. Sign back in or refresh the site. The 👑 button now appears only for Shift, and the server checks the signed-in account's ID **and** stored username on every admin API request. Other users receive HTTP 403 if they try admin routes.
+
+**Security:** Leaving `SHIFT_ADMIN_USER_ID` unset disables the panel rather than accidentally awarding privileges to the first person who claims a username. The ID itself is not a password, and you should never share the Shift account's password or JWT. User ranks are cosmetic only; they grant no extra moderation or admin permissions.
+
+### Hidden discovery for everyone
+
+A secret **Sparkkeeper** celebration can be found by interacting with the flame. It's a personal, device-local cosmetic discovery, *not* a sixth rank or something that changes other users' profiles. Motion effects respect reduced-motion settings.
+
 ## Deploy to Render
 
 1. Create a GitHub repository with **this folder's contents at its root**, including `package.json`, `server.js`, `file-types.js`, `render.yaml`, and `public/`.

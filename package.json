@@ -1,12 +1,12 @@
 {
   "name": "bonfire-chat",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "description": "Bonfire Next: realtime chat with 30 MB universal file sharing and inline music playback",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test-file-types.js"
+    "test": "node --test test-file-types.js test-rank-system.js"
   },
   "engines": {
     "node": ">=20"
