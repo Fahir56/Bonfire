@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const multer = require('multer');
 const path = require('path');
+const { MAX_FILE_BYTES, cleanFilename, servedMime, inlineMedia, retentionHours, byteRange } = require('./file-types');
 
 const app = express();
 const server = http.createServer(app);
@@ -16,11 +17,12 @@ const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) console.warn('WARNING: JWT_SECRET is not set. Set a strong secret in production.');
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL && !/localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL) ? { rejectUnauthorized: false } : false });
 app.use(express.json({ limit: '1mb' }));
-// Upload rules: photos up to 10 MB that disappear after 72 hours, videos up to 30 MB that disappear after 12 hours.
-// Messages older than MESSAGE_RETENTION_DAYS (default 90) are deleted automatically.
-const LIMITS = { photoMaxMB: 10, videoMaxMB: 30, photoHours: 72, videoHours: 12, messageDays: Math.max(1, parseInt(process.env.MESSAGE_RETENTION_DAYS, 10) || 90) };
-const isVideo = mime => String(mime).startsWith('video/');
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: LIMITS.videoMaxMB * 1024 * 1024 }, fileFilter: (_req,file,cb) => cb(null, /^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm|quicktime))$/.test(file.mimetype)) });
+// Every file type is accepted up to 30 MiB. Unsafe formats are download-only.
+// Files remain transient to prevent unlimited PostgreSQL storage growth.
+const LIMITS = { fileMaxMB: 30, photoMaxMB: 30, videoMaxMB: 30, audioMaxMB: 30,
+  photoHours: 72, videoHours: 12, audioHours: 72, fileHours: 72,
+  messageDays: Math.max(1, parseInt(process.env.MESSAGE_RETENTION_DAYS, 10) || 90) };
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 1, fields: 0 } });
 app.use(express.static(path.join(__dirname, 'public')));
 const query = (sql, args=[]) => pool.query(sql, args);
 
@@ -49,7 +51,7 @@ async function initDb() {
   CREATE INDEX IF NOT EXISTS messages_created ON messages(created_at);
   CREATE INDEX IF NOT EXISTS dms_created ON direct_messages(created_at);`);
   // Uploads from before expiry existed get the same rules, counted from when they were uploaded.
-  await query(`UPDATE attachments SET expires_at=created_at+(CASE WHEN mime_type LIKE 'video/%' THEN make_interval(hours=>$1) ELSE make_interval(hours=>$2) END) WHERE expires_at IS NULL`,[LIMITS.videoHours,LIMITS.photoHours]);
+  await query(`UPDATE attachments SET expires_at=created_at+(CASE WHEN mime_type LIKE 'video/%' THEN make_interval(hours=>$1) WHEN mime_type LIKE 'audio/%' THEN make_interval(hours=>$2) WHEN mime_type LIKE 'image/%' THEN make_interval(hours=>$3) ELSE make_interval(hours=>$4) END) WHERE expires_at IS NULL`,[LIMITS.videoHours,LIMITS.audioHours,LIMITS.photoHours,LIMITS.fileHours]);
 }
 function tokenFor(user) { return jwt.sign({ sub: user.id, username: user.username, name: user.display_name }, JWT_SECRET, { expiresIn: '14d' }); }
 function auth(req,res,next) { const h=req.headers.authorization||''; const t=h.startsWith('Bearer ')?h.slice(7):''; try { req.user=jwt.verify(t,JWT_SECRET); next(); } catch { res.status(401).json({error:'Please sign in again.'}); } }
@@ -60,8 +62,8 @@ const isUuid = s => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const PAGE = 50;
 // Channel and DM messages share one shape: author, attachment, the message it replies to, edit time and reactions.
 const MSG_SQL = {
-  channel: `SELECT m.id,m.channel_id,m.content,m.attachment_id,m.created_at,m.edited_at,m.reply_to,u.id AS user_id,u.username,u.display_name,a.filename,a.mime_type,a.expires_at AS attachment_expires_at,(a.purged_at IS NOT NULL OR a.expires_at<=NOW()) AS attachment_expired,r.content AS reply_content,r.attachment_id AS reply_attachment,ru.id AS reply_user_id,ru.display_name AS reply_name FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN attachments a ON a.id=m.attachment_id LEFT JOIN messages r ON r.id=m.reply_to LEFT JOIN users ru ON ru.id=r.user_id`,
-  dm: `SELECT m.id,m.sender_id,m.recipient_id,m.content,m.attachment_id,m.created_at,m.edited_at,m.reply_to,u.id AS user_id,u.username,u.display_name,a.filename,a.mime_type,a.expires_at AS attachment_expires_at,(a.purged_at IS NOT NULL OR a.expires_at<=NOW()) AS attachment_expired,r.content AS reply_content,r.attachment_id AS reply_attachment,ru.id AS reply_user_id,ru.display_name AS reply_name FROM direct_messages m JOIN users u ON u.id=m.sender_id LEFT JOIN attachments a ON a.id=m.attachment_id LEFT JOIN direct_messages r ON r.id=m.reply_to LEFT JOIN users ru ON ru.id=r.sender_id`
+  channel: `SELECT m.id,m.channel_id,m.content,m.attachment_id,m.created_at,m.edited_at,m.reply_to,u.id AS user_id,u.username,u.display_name,a.filename,a.mime_type,a.size_bytes AS attachment_size_bytes,a.expires_at AS attachment_expires_at,(a.purged_at IS NOT NULL OR a.expires_at<=NOW()) AS attachment_expired,r.content AS reply_content,r.attachment_id AS reply_attachment,ru.id AS reply_user_id,ru.display_name AS reply_name FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN attachments a ON a.id=m.attachment_id LEFT JOIN messages r ON r.id=m.reply_to LEFT JOIN users ru ON ru.id=r.user_id`,
+  dm: `SELECT m.id,m.sender_id,m.recipient_id,m.content,m.attachment_id,m.created_at,m.edited_at,m.reply_to,u.id AS user_id,u.username,u.display_name,a.filename,a.mime_type,a.size_bytes AS attachment_size_bytes,a.expires_at AS attachment_expires_at,(a.purged_at IS NOT NULL OR a.expires_at<=NOW()) AS attachment_expired,r.content AS reply_content,r.attachment_id AS reply_attachment,ru.id AS reply_user_id,ru.display_name AS reply_name FROM direct_messages m JOIN users u ON u.id=m.sender_id LEFT JOIN attachments a ON a.id=m.attachment_id LEFT JOIN direct_messages r ON r.id=m.reply_to LEFT JOIN users ru ON ru.id=r.sender_id`
 };
 async function reactionsFor(ids){const map=new Map();if(!ids.length)return map;const r=await query('SELECT message_id,emoji,array_agg(user_id::text ORDER BY created_at) AS users FROM reactions WHERE message_id=ANY($1::uuid[]) GROUP BY message_id,emoji ORDER BY MIN(created_at)',[ids]);for(const x of r.rows){if(!map.has(x.message_id))map.set(x.message_id,[]);map.get(x.message_id).push({emoji:x.emoji,users:x.users});}return map;}
 async function hydrate(rows){const reacts=await reactionsFor(rows.map(r=>r.id));return rows.map(({reply_content,reply_attachment,reply_user_id,reply_name,...m})=>({...m,reply:m.reply_to?(reply_user_id?{id:m.reply_to,user_id:reply_user_id,display_name:reply_name,content:String(reply_content||'').slice(0,200),attachment:!!reply_attachment}:{id:m.reply_to,deleted:true}):null,reactions:reacts.get(m.id)||[]}));}
@@ -82,10 +84,76 @@ app.get('/api/channels/:id/messages',auth,async(req,res)=>{try{const m=await que
 app.get('/api/servers/:id/members',auth,async(req,res)=>{try{const m=await query('SELECT 1 FROM server_members WHERE server_id=$1 AND user_id=$2',[req.params.id,req.user.sub]);if(!m.rowCount)return res.status(403).json({error:'Not a member.'});const r=await query('SELECT u.id,u.username,u.display_name FROM users u JOIN server_members sm ON sm.user_id=u.id WHERE sm.server_id=$1 ORDER BY u.display_name',[req.params.id]);res.json({members:r.rows.map(u=>({...u,status:statusOf(u.id)}))});}catch(e){console.error(e);res.status(500).json({error:'Could not load members.'});}});
 
 
-// Uploads are stored in PostgreSQL so they survive service restarts; limit is 20 MB per file.
+// PostgreSQL-backed uploads: 30 MiB for EVERY filename/extension, with safe MIME handling.
 app.get('/api/config',(_req,res)=>res.json({limits:LIMITS}));
-app.post('/api/uploads',auth,(req,res,next)=>upload.single('file')(req,res,err=>{if(err)return res.status(413).json({error:err.code==='LIMIT_FILE_SIZE'?`Videos can be up to ${LIMITS.videoMaxMB} MB and photos up to ${LIMITS.photoMaxMB} MB.`:'Upload failed.'});next();}),async(req,res)=>{try{const f=req.file;if(!f)return res.status(400).json({error:`Choose a photo (PNG, JPG, GIF, WebP, up to ${LIMITS.photoMaxMB} MB) or a video (MP4, WebM, MOV, up to ${LIMITS.videoMaxMB} MB).`});const video=isVideo(f.mimetype);if(!video&&f.size>LIMITS.photoMaxMB*1024*1024)return res.status(413).json({error:`Photos can be up to ${LIMITS.photoMaxMB} MB.`});const id=crypto.randomUUID();const hours=video?LIMITS.videoHours:LIMITS.photoHours;const r=await query('INSERT INTO attachments(id,owner_id,filename,mime_type,data,size_bytes,expires_at) VALUES($1,$2,$3,$4,$5,$6,NOW()+make_interval(hours=>$7)) RETURNING expires_at',[id,req.user.sub,f.originalname.slice(0,180),f.mimetype,f.buffer,f.size,hours]);res.json({attachment:{id,filename:f.originalname,mime_type:f.mimetype,size_bytes:f.size,expires_at:r.rows[0].expires_at}})}catch(e){console.error(e);res.status(500).json({error:'Upload failed.'})}});
-app.get('/api/uploads/:id', async(req,res)=>{try{const token=String(req.query.token||'');jwt.verify(token,JWT_SECRET);if(!isUuid(req.params.id))return res.sendStatus(404);const r=await query('SELECT filename,mime_type,data,EXTRACT(EPOCH FROM (expires_at-NOW()))::int AS ttl,purged_at FROM attachments WHERE id=$1',[req.params.id]);if(!r.rowCount)return res.sendStatus(404);const a=r.rows[0];if(a.purged_at||a.ttl<=0)return res.sendStatus(410);res.setHeader('Content-Type',a.mime_type);res.setHeader('Content-Disposition',`inline; filename="${a.filename.replace(/["\\\r\n]/g,'_')}"`);res.setHeader('Cache-Control',`private, max-age=${Math.max(0,Math.min(3600,a.ttl))}`);res.send(a.data)}catch{res.sendStatus(401)}});
+app.post('/api/uploads',auth,(req,res,next)=>upload.single('file')(req,res,err=>{
+  if(err) return res.status(err.code==='LIMIT_FILE_SIZE'?413:400).json({error:err.code==='LIMIT_FILE_SIZE'?'Files must be 30 MB or smaller.':'Could not process that file.'});
+  next();
+}),async(req,res)=>{
+  try {
+    const f=req.file;
+    if(!f) return res.status(400).json({error:'Choose a file to upload (up to 30 MB).'});
+    const filename=cleanFilename(f.originalname);
+    const mime=servedMime(filename); // Do not trust client-provided Content-Type.
+    const id=crypto.randomUUID(), hours=retentionHours(mime,LIMITS);
+    const r=await query('INSERT INTO attachments(id,owner_id,filename,mime_type,data,size_bytes,expires_at) VALUES($1,$2,$3,$4,$5,$6,NOW()+make_interval(hours=>$7)) RETURNING expires_at',[id,req.user.sub,filename,mime,f.buffer,f.size,hours]);
+    res.json({attachment:{id,filename,mime_type:mime,size_bytes:f.size,expires_at:r.rows[0].expires_at}});
+  } catch(e){console.error(e);res.status(500).json({error:'Upload failed.'});}
+});
+// Media requests use the same login token as the existing app's image/video URLs.
+// Also enforce membership of a linked channel/DM, not just knowledge of a UUID.
+app.get('/api/uploads/:id', async(req,res)=>{
+  try {
+    const session=jwt.verify(String(req.query.token||''),JWT_SECRET);
+    if(!isUuid(req.params.id))return res.sendStatus(404);
+    const uid=session.sub,id=req.params.id;
+    const allowed=await query(`SELECT 1 FROM attachments a WHERE a.id=$1 AND (
+      a.owner_id=$2
+      OR EXISTS (SELECT 1 FROM messages m JOIN server_members sm ON sm.server_id=m.server_id AND sm.user_id=$2 WHERE m.attachment_id=a.id)
+      OR EXISTS (SELECT 1 FROM direct_messages d WHERE d.attachment_id=a.id AND (d.sender_id=$2 OR d.recipient_id=$2))
+    )`,[id,uid]);
+    if(!allowed.rowCount)return res.sendStatus(404);
+    const r=await query('SELECT filename,mime_type,data,EXTRACT(EPOCH FROM (expires_at-NOW()))::int AS ttl,purged_at FROM attachments WHERE id=$1',[id]);
+    if(!r.rowCount)return res.sendStatus(404);
+    const a=r.rows[0];
+    if(a.purged_at||a.ttl<=0)return res.sendStatus(410);
+    const mime=servedMime(a.filename),inline=inlineMedia(mime),name=cleanFilename(a.filename);
+    res.setHeader('Content-Type',mime);
+    res.setHeader('X-Content-Type-Options','nosniff');
+    res.setHeader('Cross-Origin-Resource-Policy','same-origin');
+    res.setHeader('Content-Disposition',`${inline?'inline':'attachment'}; filename="${name.replace(/[^\x20-\x7e]|["\\]/g,'_')}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+    res.setHeader('Cache-Control','private, no-store');
+    res.setHeader('Accept-Ranges','bytes');
+    const data=a.data;
+    const range=byteRange(req.headers.range,data.length);
+    if(range===false){res.setHeader('Content-Range',`bytes */${data.length}`);return res.sendStatus(416);}
+    if(range){
+      res.status(206);res.setHeader('Content-Range',`bytes ${range.start}-${range.end}/${data.length}`);
+      res.setHeader('Content-Length',range.end-range.start+1);
+      return res.end(data.subarray(range.start,range.end+1));
+    }
+    res.setHeader('Content-Length',data.length);
+    return res.end(data);
+  }catch(e){if(e.name==='JsonWebTokenError'||e.name==='TokenExpiredError')return res.sendStatus(401);console.error('File delivery failed:',e);return res.sendStatus(500);}
+});
+// Search all retained messages in a channel or DM, with authorization on every query.
+app.get('/api/search/messages',auth,async(req,res)=>{
+  try{
+    const term=String(req.query.q||'').trim().slice(0,120),uid=req.user.sub;
+    if(term.length<2)return res.json({results:[]});
+    let rows;
+    if(isUuid(req.query.channelId)){
+      const access=await query('SELECT 1 FROM channels c JOIN server_members sm ON sm.server_id=c.server_id WHERE c.id=$1 AND sm.user_id=$2',[req.query.channelId,uid]);
+      if(!access.rowCount)return res.sendStatus(403);
+      rows=await query('SELECT m.id,m.content,m.created_at,u.display_name FROM messages m JOIN users u ON u.id=m.user_id WHERE m.channel_id=$1 AND position(lower($2) in lower(m.content))>0 ORDER BY m.created_at DESC LIMIT 40',[req.query.channelId,term]);
+    }else if(isUuid(req.query.dmUserId)){
+      const access=await query(CAN_DM_SQL,[uid,req.query.dmUserId]);
+      if(!access.rowCount)return res.sendStatus(403);
+      rows=await query('SELECT m.id,m.content,m.created_at,u.display_name FROM direct_messages m JOIN users u ON u.id=m.sender_id WHERE ((m.sender_id=$1 AND m.recipient_id=$2) OR (m.sender_id=$2 AND m.recipient_id=$1)) AND position(lower($3) in lower(m.content))>0 ORDER BY m.created_at DESC LIMIT 40',[uid,req.query.dmUserId,term]);
+    }else return res.status(400).json({error:'Choose a channel or DM to search.'});
+    res.json({results:rows.rows});
+  }catch(e){console.error(e);res.status(500).json({error:'Search failed.'});}
+});
 app.get('/api/users/search',auth,async(req,res)=>{try{const term=String(req.query.q||'').trim().toLowerCase().replace(/^@/,'');if(term.length<2)return res.json({users:[]});const r=await query("SELECT id,username,display_name FROM users WHERE username LIKE $1 AND id<>$2 ORDER BY username LIMIT 12",[term+'%',req.user.sub]);res.json({users:r.rows})}catch(e){res.status(500).json({error:'User search failed.'})}});
 app.post('/api/friends/request',auth,async(req,res)=>{try{const target=String(req.body.username||'').trim().toLowerCase().replace(/^@/,'');const r=await query('SELECT id,username,display_name FROM users WHERE username=$1',[target]);if(!r.rowCount)return res.status(404).json({error:'Username not found.'});const other=r.rows[0];if(other.id===req.user.sub)return res.status(400).json({error:'You cannot add yourself.'});const existing=await query('SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2',[req.user.sub,other.id]);if(existing.rowCount)return res.status(409).json({error:'You are already friends.'});const reverse=await query("SELECT id FROM friend_requests WHERE sender_id=$1 AND receiver_id=$2 AND status='pending'",[other.id,req.user.sub]);if(reverse.rowCount){await query("UPDATE friend_requests SET status='accepted' WHERE id=$1",[reverse.rows[0].id]);await query('INSERT INTO friendships(user_id,friend_id) VALUES($1,$2),($2,$1) ON CONFLICT DO NOTHING',[req.user.sub,other.id]);return res.json({ok:true,accepted:true})}await query("INSERT INTO friend_requests(id,sender_id,receiver_id,status) VALUES($1,$2,$3,'pending') ON CONFLICT(sender_id,receiver_id) DO UPDATE SET status='pending'",[crypto.randomUUID(),req.user.sub,other.id]);res.json({ok:true})}catch(e){console.error(e);res.status(500).json({error:'Could not send friend request.'})}});
 app.get('/api/friends',auth,async(req,res)=>{try{const friends=await query('SELECT u.id,u.username,u.display_name FROM friendships f JOIN users u ON u.id=f.friend_id WHERE f.user_id=$1 ORDER BY u.username',[req.user.sub]);const incoming=await query("SELECT fr.id,u.username,u.display_name FROM friend_requests fr JOIN users u ON u.id=fr.sender_id WHERE fr.receiver_id=$1 AND fr.status='pending' ORDER BY fr.created_at DESC",[req.user.sub]);const outgoing=await query("SELECT u.username,u.display_name FROM friend_requests fr JOIN users u ON u.id=fr.receiver_id WHERE fr.sender_id=$1 AND fr.status='pending' ORDER BY fr.created_at DESC",[req.user.sub]);res.json({friends:friends.rows.map(u=>({...u,status:statusOf(u.id)})),incoming:incoming.rows,outgoing:outgoing.rows})}catch(e){res.status(500).json({error:'Could not load friends.'})}});
@@ -130,7 +198,7 @@ io.on('connection',socket=>{
  socket.on('disconnect',()=>setPresence(socket,null));
 });
 app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'public','index.html')));
-// Cleanup: wipe expired photos/videos, delete messages past the retention window, and drop uploads nobody sent.
+// Cleanup: wipe expired files, delete messages past the retention window, and drop uploads nobody sent.
 // The emptied space is reused by new uploads, so the database stops growing once this is in steady state.
 let cleaning=false;
 async function cleanup(){if(cleaning)return;cleaning=true;try{
