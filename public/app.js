@@ -18,7 +18,7 @@ const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const palette = ['#8c6eb3', '#d07a4f', '#4f93a3', '#c4607f', '#5e9e6b', '#b0894a', '#6a7fd0', '#c76ad0'];
 const EMOJIS = ['🔥', '😂', '🥹', '😭', '💀', '🤝', '👀', '✨', '❤️', '👍', '🎉', '🙏', '😎', '🤔', '😤', '🥳', '🫡', '😴', '🍕', '🌭', '🍿', '🐸', '🦆', '💯'];
 const QUICK_REACTS = ['❤️', '😂', '🔥'];
-let limits = { photoMaxMB: 10, videoMaxMB: 30, photoHours: 72, videoHours: 12, messageDays: 90 };
+let limits = { fileMaxMB: 30, photoMaxMB: 30, videoMaxMB: 30, audioMaxMB: 30, photoHours: 72, videoHours: 12, audioHours: 72, fileHours: 72, messageDays: 90 };
 const input = $('messageInput');
 
 /* ---------- small helpers ---------- */
@@ -45,7 +45,11 @@ function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
 function stripMd(s) { return String(s || '').replace(/```|`|\*\*|~~|\|\|/g, '').replace(/\s+/g, ' ').trim() }
 function clip(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s }
 function hoursText(h) { return h % 24 === 0 && h >= 48 ? `${h / 24} days` : `${h} hours` }
-function renderLimitHint() { $('limitHint').textContent = `Photos up to ${limits.photoMaxMB} MB (vanish after ${hoursText(limits.photoHours)}) · videos up to ${limits.videoMaxMB} MB (vanish after ${hoursText(limits.videoHours)})` }
+function renderLimitHint() { $('limitHint').textContent = `Any file · ${limits.fileMaxMB} MB max · music plays inline` }
+function formatBytes(n) { return !Number.isFinite(+n) ? '' : +n < 1048576 ? `${Math.max(1,Math.ceil(+n/1024))} KB` : `${(+n/1048576).toFixed(1)} MB` }
+function attachmentKind(mime) { return String(mime||'').startsWith('audio/') ? 'audio' : String(mime||'').startsWith('video/') ? 'video' : /^(image\/(png|jpeg|gif|webp))$/.test(mime||'') ? 'image' : 'file' }
+function expiryHours(kind) { return limits[({audio:'audioHours',video:'videoHours',image:'photoHours',file:'fileHours'})[kind]] || 72 }
+function fileIcon(name,kind) { if(kind==='audio')return '🎵';if(kind==='video')return '🎬';if(kind==='image')return '🖼️';const ext=String(name||'').split('.').pop().toLowerCase();return ({pdf:'📕',zip:'🗜️',rar:'🗜️','7z':'🗜️',apk:'📱',exe:'⚙️',doc:'📝',docx:'📝',txt:'📄',js:'💻',py:'💻',html:'💻',json:'💻',csv:'📊',xlsx:'📊',pptx:'📊'})[ext]||'📁' }
 function isMobile() { return matchMedia('(max-width:680px)').matches }
 function shake(el) { el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake'); blip('err') }
 function load(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback } catch { return fallback } }
@@ -183,7 +187,7 @@ async function auth(mode) {
   const btn = $(mode); btn.disabled = true;
   try {
     const d = await api('/api/auth/' + mode, { method: 'POST', body: JSON.stringify({ username, password }) });
-    token = d.token; user = d.user; localStorage.setItem('bonfireToken', token);
+    token = d.token; user = d.user; try { localStorage.setItem('bonfireToken', token) } catch { /* Private browsing may block storage. */ }
     sparks(...centerOf(btn), 22, { emoji: ['🔥', '✨', '🎉'], spread: 2.2 }); blip('send');
     await boot();
   } catch (e) { $('authError').textContent = e.message; shake($('authCard')) }
@@ -192,7 +196,7 @@ async function auth(mode) {
 $('signin').onclick = () => auth('signin'); $('signup').onclick = () => auth('signup');
 $('password').addEventListener('keydown', e => { if (e.key === 'Enter') auth('signin') });
 $('username').addEventListener('keydown', e => { if (e.key === 'Enter') $('password').focus() });
-$('signout').onclick = () => { saveDraft(); if (socket) socket.disconnect(); leaveVoice(); localStorage.removeItem('bonfireToken'); location.reload() };
+$('signout').onclick = () => { saveDraft(); if (socket) socket.disconnect(); leaveVoice(); try { localStorage.removeItem('bonfireToken') } catch { } location.reload() };
 
 /* Rising embers behind the sign-in card */
 function startEmbers() {
@@ -469,23 +473,45 @@ function buildArticle(m, prev, animate = false) {
     (compact ? `<time class="stamp" title="${safe(at.toLocaleString())}">${time(m.created_at)}</time>` : avatar(n, 'avatar author', who)) +
     `<div class="message-body">${compact ? '' : `<div class="message-meta"><b class="author" ${who}>${safe(n)}</b><time title="${safe(at.toLocaleString())}">${time(m.created_at)}</time></div>`}${body}${media}${reactionsHTML(m)}</div>` +
     `<div class="msg-actions">${QUICK_REACTS.map(e => `<button data-act="quick" data-emoji="${e}" data-tip="React ${e}">${e}</button>`).join('')}<button data-act="react" data-tip="More reactions">😀</button><button data-act="reply" data-tip="Reply">↩️</button>${mine ? '<button data-act="edit" data-tip="Edit">✏️</button>' : ''}${m.content ? '<button data-act="copy" data-tip="Copy text">📋</button>' : ''}${canDelete ? '<button data-act="delete" class="danger" data-tip="Delete (Shift+click skips the check)">🗑️</button>' : ''}</div>`;
-  el.querySelectorAll('img.message-media,video.message-media').forEach(x => {
+  el.querySelectorAll('img.message-media,video.message-media,audio.inline-audio').forEach(x => {
     x.addEventListener(x.tagName === 'IMG' ? 'load' : 'loadedmetadata', () => { if (stickToBottom) scrollBottom() }, { once: true });
     // If it fails to load, ask the server whether it expired (410) — a video the browser just can't play stays as-is
     x.addEventListener('error', () => fetch(x.currentSrc || x.src, { method: 'HEAD' }).then(r => { if (r.status === 410 || r.status === 404) { m.attachment_expired = true; rerenderMessage(m.id) } }).catch(() => { }), { once: true });
   });
+  el.querySelectorAll('.audio-card').forEach(wireAudioCard);
   return el;
 }
-/* Photos and videos expire: show a live countdown, then a placeholder */
+/* Shared files expire: show a live countdown, then a placeholder */
 function mediaHTML(m) {
   if (!m.attachment_id) return '';
-  const video = String(m.mime_type || '').startsWith('video/'), exp = m.attachment_expires_at ? +new Date(m.attachment_expires_at) : 0;
-  if (m.attachment_expired || (exp && exp <= Date.now())) return `<div class="media-expired">${video ? '🎬' : '🖼️'} This ${video ? 'video' : 'photo'} has expired</div>`;
-  const url = '/api/uploads/' + encodeURIComponent(m.attachment_id) + '?token=' + encodeURIComponent(token);
-  const el = video
-    ? `<video class="message-media" controls preload="metadata" src="${url}"></video>`
-    : `<a href="${url}" target="_blank" rel="noopener"><img class="message-media" loading="lazy" alt="${safe(m.filename || 'Shared image')}" src="${url}"></a>`;
-  return `<div class="media-wrap">${el}${exp ? `<span class="expiry" data-exp="${exp}" data-tip="Disappears ${safe(new Date(exp).toLocaleString())}">${expiryText(exp)}</span>` : ''}</div>`;
+  const kind=attachmentKind(m.mime_type), exp=m.attachment_expires_at ? +new Date(m.attachment_expires_at) : 0;
+  if (m.attachment_expired || (exp && exp <= Date.now())) return `<div class="media-expired">${fileIcon(m.filename,kind)} This ${kind==='file'?'file':kind} has expired</div>`;
+  const url='/api/uploads/'+encodeURIComponent(m.attachment_id)+'?token='+encodeURIComponent(token);
+  const name=safe(m.filename||'Shared file'), filesize=formatBytes(m.attachment_size_bytes);
+  const ext=String(m.filename||'file').split('.').pop().slice(0,8).toUpperCase();
+  let el;
+  if(kind==='video') el=`<div class="video-card"><video class="message-media" controls playsinline preload="metadata" src="${url}"></video><div class="media-caption"><span>🎬 ${name}</span><small>${filesize}</small></div></div>`;
+  else if(kind==='image') el=`<a href="${url}" target="_blank" rel="noopener"><img class="message-media" loading="lazy" alt="${name}" src="${url}"></a>`;
+  else if(kind==='audio') {
+    const seed=[...String(m.filename||'music')].reduce((a,c)=>a+c.charCodeAt(0),0);
+    const bars=Array.from({length:31},(_,i)=>`<i style="--level:${18+((seed+i*31+i*i*13)%70)}%"></i>`).join('');
+    el=`<div class="audio-card"><div class="audio-top"><div class="audio-art" aria-hidden="true">♫</div><div class="audio-title"><strong title="${name}">${name}</strong><span>🎧 Listen here · ${filesize}</span></div><span class="audio-tag">AUDIO</span></div><div class="audio-wave" aria-hidden="true">${bars}</div><div class="audio-controls"><button type="button" class="audio-play" aria-label="Play ${name}">▶</button><span class="audio-time">0:00 / --:--</span><input class="audio-seek" aria-label="Seek through audio" type="range" min="0" max="1000" value="0"><button type="button" class="audio-speed" aria-label="Change playback speed">1×</button></div><audio class="inline-audio" preload="metadata" src="${url}"></audio><span class="audio-error hidden">Preview unavailable in this browser. <a href="${url}" download="${name}">Save the file</a> instead.</span></div>`;
+  } else el=`<a class="file-card" href="${url}" download="${name}" rel="noopener" aria-label="Download ${name}"><span class="file-icon">${fileIcon(m.filename,kind)}</span><span class="file-detail"><strong title="${name}">${name}</strong><small>${safe(ext)} file · ${filesize}</small></span><span class="file-download" aria-hidden="true">↓</span></a>`;
+  return `<div class="media-wrap ${kind}-wrap">${el}${exp?`<span class="expiry" data-exp="${exp}" data-tip="Disappears ${safe(new Date(exp).toLocaleString())}">${expiryText(exp)}</span>`:''}</div>`;
+}
+// One audio track at a time; built-in audio elements fetch ranges and buffer while playing.
+let playingAudio=null;
+function audioTime(seconds){if(!Number.isFinite(seconds))return '--:--';const n=Math.max(0,Math.floor(seconds));return `${Math.floor(n/60)}:${String(n%60).padStart(2,'0')}`}
+function wireAudioCard(card){
+  const media=card.querySelector('audio'),play=card.querySelector('.audio-play'),seek=card.querySelector('.audio-seek');
+  const label=card.querySelector('.audio-time'),speed=card.querySelector('.audio-speed'),wave=card.querySelector('.audio-wave');
+  function update(){const duration=media.duration,valid=Number.isFinite(duration)&&duration>0;seek.value=valid?Math.round(1000*media.currentTime/duration):0;seek.disabled=!valid;label.textContent=`${audioTime(media.currentTime)} / ${audioTime(duration)}`;play.textContent=media.paused?'▶':'❚❚';play.setAttribute('aria-label',media.paused?'Play audio':'Pause audio');wave.classList.toggle('playing',!media.paused);}
+  play.onclick=async()=>{if(media.paused){if(playingAudio&&playingAudio!==media)playingAudio.pause();playingAudio=media;try{await media.play()}catch{card.querySelector('.audio-error').classList.remove('hidden')}}else media.pause();update()};
+  seek.oninput=()=>{if(Number.isFinite(media.duration)&&media.duration>0)media.currentTime=media.duration*(+seek.value/1000)};
+  speed.onclick=()=>{const rates=[1,1.25,1.5,2],next=rates[(rates.indexOf(media.playbackRate)+1)%rates.length];media.playbackRate=next;speed.textContent=next+'×'};
+  ['loadedmetadata','durationchange','timeupdate','play','pause','ended'].forEach(event=>media.addEventListener(event,update));
+  media.addEventListener('error',()=>card.querySelector('.audio-error').classList.remove('hidden'),{once:true});
+  update();
 }
 function expiryText(exp) {
   const mins = Math.max(1, Math.ceil((exp - Date.now()) / 6e4)), h = Math.floor(mins / 60);
@@ -738,33 +764,49 @@ function pickMention(i) {
 function closeMention() { mention = null; $('mentionPop').classList.add('hidden') }
 $('mentionPop').addEventListener('mousedown', e => { e.preventDefault(); const b = e.target.closest('[data-i]'); if (b) pickMention(+b.dataset.i) });
 
+let uploadXHR=null;
+$('uploadCancel').onclick=()=>{if(uploadXHR)uploadXHR.abort()};
 function setFile(f) {
-  if (selectedPreviewUrl) URL.revokeObjectURL(selectedPreviewUrl);
-  selectedFile = f || null; selectedPreviewUrl = null;
-  if (!f) { $('uploadPreview').innerHTML = ''; $('fileInput').value = ''; return }
-  if (!/^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm|quicktime))$/.test(f.type)) { toast('Only PNG, JPG, GIF, WebP, MP4, WebM or MOV'); selectedFile = null; return }
-  const video = f.type.startsWith('video/'), maxMB = video ? limits.videoMaxMB : limits.photoMaxMB;
-  if (f.size > maxMB * 1024 * 1024) { toast(`${video ? 'Videos' : 'Photos'} can be up to ${maxMB} MB — that one is ${(Math.ceil(f.size / 104857.6) / 10).toFixed(1)} MB`); shake($('composer')); selectedFile = null; $('fileInput').value = ''; return }
-  selectedPreviewUrl = URL.createObjectURL(f);
-  const thumb = f.type.startsWith('image/') ? `<img src="${selectedPreviewUrl}" alt="">` : '<div class="vid">🎬</div>';
-  const size = f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB';
-  $('uploadPreview').innerHTML = `<div class="upload-chip">${thumb}<span>${safe(f.name)}<small>${size} · disappears ${hoursText(video ? limits.videoHours : limits.photoHours)} after sending</small></span><button type="button" class="icon-btn" id="clearFile" aria-label="Remove file">✕</button></div>`;
-  $('clearFile').onclick = () => setFile(null);
+  if(uploadXHR){toast('Finish or cancel the current upload first.');return}
+  if(selectedPreviewUrl)URL.revokeObjectURL(selectedPreviewUrl);
+  selectedFile=f||null;selectedPreviewUrl=null;
+  if(!f){$('uploadPreview').innerHTML='';$('fileInput').value='';return}
+  const maxMB=limits.fileMaxMB||30;
+  if(f.size>maxMB*1048576){toast(`Files must be ${maxMB} MB or smaller · yours is ${formatBytes(f.size)}`);shake($('composer'));selectedFile=null;$('fileInput').value='';return}
+  const kind=attachmentKind((f.type&&f.type!=='application/octet-stream'?f.type:null)||({mp3:'audio/mpeg',m4a:'audio/mp4',wav:'audio/wav',ogg:'audio/ogg',flac:'audio/flac',mp4:'video/mp4',webm:'video/webm',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp',gif:'image/gif'})[f.name.split('.').pop().toLowerCase()]||'');
+  if(kind==='image')selectedPreviewUrl=URL.createObjectURL(f);
+  const thumb=kind==='image'?`<img src="${selectedPreviewUrl}" alt="">`:`<div class="vid">${fileIcon(f.name,kind)}</div>`;
+  $('uploadPreview').innerHTML=`<div class="upload-chip">${thumb}<span title="${safe(f.name)}">${safe(f.name)}<small>${formatBytes(f.size)} · ${kind==='audio'?'plays in chat · ':''}expires after ${hoursText(expiryHours(kind))}</small></span><button type="button" class="icon-btn" id="clearFile" aria-label="Remove file">✕</button></div>`;
+  $('clearFile').onclick=()=>setFile(null);
   input.focus();
 }
-$('fileInput').onchange = () => setFile($('fileInput').files[0]);
-const chatEl = document.querySelector('.chat');
-chatEl.addEventListener('dragover', e => { if ([...e.dataTransfer.types].includes('Files')) e.preventDefault() });
-chatEl.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) { e.preventDefault(); setFile(f) } });
-
-async function uploadSelected() {
-  if (!selectedFile) return null;
-  const fd = new FormData(); fd.append('file', selectedFile);
-  const r = await fetch('/api/uploads', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: fd });
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw Error(d.error || 'Upload failed');
-  setFile(null);
-  return d.attachment.id;
+$('fileInput').onchange=()=>setFile($('fileInput').files[0]);
+const chatEl=document.querySelector('.chat');
+let dragDepth=0;
+document.addEventListener('dragenter',e=>{if(e.dataTransfer&&[...e.dataTransfer.types].includes('Files')){e.preventDefault();dragDepth++;$('dropOverlay').classList.remove('hidden')}});
+document.addEventListener('dragover',e=>{if(e.dataTransfer&&[...e.dataTransfer.types].includes('Files'))e.preventDefault()});
+document.addEventListener('dragleave',e=>{if(dragDepth>0&&!--dragDepth)$('dropOverlay').classList.add('hidden')});
+document.addEventListener('drop',e=>{if(e.dataTransfer&&[...e.dataTransfer.types].includes('Files')){e.preventDefault();dragDepth=0;$('dropOverlay').classList.add('hidden');const f=e.dataTransfer.files[0];if(f)setFile(f)}});
+window.addEventListener('blur',()=>{dragDepth=0;$('dropOverlay').classList.add('hidden')});
+input.addEventListener('paste',e=>{const files=[...(e.clipboardData?.files||[])];if(files.length){e.preventDefault();setFile(files[0]);toast('Ready to share your pasted file!')}});
+function showUploadProgress(percent,label='Uploading your file…'){$('uploadProgress').classList.remove('hidden');$('uploadProgressLabel').textContent=label;$('uploadFill').style.width=percent+'%';$('uploadPercent').textContent=percent+'%'}
+async function uploadSelected(){
+  if(!selectedFile)return null;
+  const file=selectedFile;
+  const fd=new FormData();fd.append('file',file);
+  showUploadProgress(0);
+  try{
+    const data=await new Promise((resolve,reject)=>{
+      const xhr=new XMLHttpRequest();uploadXHR=xhr;xhr.open('POST','/api/uploads');xhr.setRequestHeader('Authorization','Bearer '+token);xhr.responseType='json';
+      xhr.upload.onprogress=e=>{if(e.lengthComputable)showUploadProgress(Math.min(99,Math.round(e.loaded/e.total*100)))};
+      xhr.onload=()=>{const d=xhr.response||{};xhr.status>=200&&xhr.status<300?resolve(d):reject(Error(d.error||`Upload failed (${xhr.status})`))};
+      xhr.onerror=()=>reject(Error('Network error while uploading.'));
+      xhr.onabort=()=>reject(Error('Upload cancelled.'));
+      xhr.send(fd);
+    });
+    showUploadProgress(100,'Uploaded!');selectedFile=null;uploadXHR=null;setFile(null);
+    return data.attachment.id;
+  }finally{uploadXHR=null;$('uploadProgress').classList.add('hidden')}
 }
 let sending = false;
 $('composer').onsubmit = async e => {
@@ -772,6 +814,8 @@ $('composer').onsubmit = async e => {
   const content = input.value.trim();
   if (!content && !selectedFile) { shake($('composer')); return }
   if (!view || sending) return; sending = true;
+  document.querySelector('.send').disabled = true;
+  document.querySelector('.attach').classList.add('busy');
   const send = document.querySelector('.send');
   try {
     const attachmentId = await uploadSelected(), reply = replyTo?.id || null;
@@ -781,7 +825,7 @@ $('composer').onsubmit = async e => {
     send.classList.remove('launch'); void send.offsetWidth; send.classList.add('launch');
     const [x, y] = centerOf(send); sparks(x, y, 12, { emoji: ['🔥', '✨', '💫'], up: true, spread: 1.6 }); blip('send');
   } catch (err) { toast(err.message); shake($('composer')) }
-  finally { sending = false }
+  finally { sending = false; document.querySelector('.send').disabled = false; document.querySelector('.attach').classList.remove('busy') }
 };
 document.querySelector('.send').addEventListener('animationend', e => { if (e.animationName === 'launch') e.target.classList.remove('launch') });
 
@@ -1167,8 +1211,34 @@ $('switchInput').addEventListener('keydown', e => {
 $('switchList').onclick = e => { const b = e.target.closest('[data-i]'); if (b) pickSwitch(+b.dataset.i) };
 $('switcher').onclick = e => { if (e.target === $('switcher')) closeSwitcher() };
 
+/* ---------- full-conversation search ---------- */
+let searchTimer=null,searchTicket=0;
+function openSearch(){if(!view)return;closePopovers();$('searchModal').classList.remove('hidden');$('searchInput').value='';$('searchResults').innerHTML='<p class="search-empty">Start typing to search this conversation.</p>';$('searchModal').dataset.view=view.id;setTimeout(()=>$('searchInput').focus(),40)}
+function closeSearch(){$('searchModal').classList.add('hidden');clearTimeout(searchTimer);searchTicket++}
+$('searchBtn').onclick=openSearch;
+$('searchClose').onclick=closeSearch;
+$('searchModal').onclick=e=>{if(e.target===$('searchModal'))closeSearch()};
+$('searchInput').oninput=()=>{
+  clearTimeout(searchTimer);const q=$('searchInput').value.trim(),ticket=++searchTicket;
+  if(q.length<2){$('searchResults').innerHTML='<p class="search-empty">Type at least 2 characters to search.</p>';return}
+  $('searchResults').innerHTML='<p class="search-empty">Searching…</p>';
+  searchTimer=setTimeout(async()=>{
+    try{
+      const params=new URLSearchParams({q,...(view.kind==='dm'?{dmUserId:view.id}:{channelId:view.id})});
+      const data=await api('/api/search/messages?'+params);
+      if(ticket!==searchTicket)return;
+      $('searchResults').innerHTML=data.results.length?data.results.map(r=>`<button type="button" class="search-hit" data-id="${safe(r.id)}"><span><b>${safe(r.display_name)}</b><time>${safe(new Date(r.created_at).toLocaleString())}</time></span><p>${safe(clip(r.content||'(attachment)',320))}</p></button>`).join(''):'<p class="search-empty">No messages found. Try another word.</p>';
+    }catch(e){if(ticket===searchTicket)$('searchResults').innerHTML='<p class="search-empty">'+safe(e.message)+'</p>'}
+  },220);
+};
+$('searchResults').onclick=async e=>{
+  const hit=e.target.closest('[data-id]');if(!hit)return;
+  const id=hit.dataset.id;closeSearch();await jumpTo(id);
+};
+
 /* ---------- global keys & fun bits ---------- */
 document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && user && !$('app').classList.contains('hidden')) {e.preventDefault();openSearch();return}
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && user) { e.preventDefault(); $('switcher').classList.contains('hidden') ? openSwitcher() : closeSwitcher(); return }
   if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && view?.kind === 'channel' && channels.length) {
     e.preventDefault(); const i = channels.findIndex(c => c.id === view.id);
@@ -1178,6 +1248,7 @@ document.addEventListener('keydown', e => {
     if (!$('lightbox').classList.contains('hidden')) return closeLightbox();
     if (askEscape) return askEscape();
     if (!$('switcher').classList.contains('hidden')) return closeSwitcher();
+    if (!$('searchModal').classList.contains('hidden')) return closeSearch();
     if (!$('friendModal').classList.contains('hidden')) return closeFriends();
     closePopovers(); closeDrawers(); return;
   }
@@ -1244,7 +1315,7 @@ $('voiceJoin').onclick = joinVoice;
 
 /* ---------- start ---------- */
 (async () => {
-  token = localStorage.getItem('bonfireToken');
-  if (token) { try { user = (await api('/api/me')).user; await boot(); return } catch { localStorage.removeItem('bonfireToken'); token = null } }
+  try { token = localStorage.getItem('bonfireToken'); } catch { token = null; }
+  if (token) { try { user = (await api('/api/me')).user; await boot(); return } catch { try { localStorage.removeItem('bonfireToken') } catch { } token = null } }
   showAuth();
 })();

@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#14151b">
+<meta name="theme-color" content="#101018">
+<meta name="description" content="Bonfire — a cozy home for conversations, voice chats, music and files.">
 <title>Bonfire — hang out together</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -88,6 +89,7 @@
       </div>
       <div class="head-actions">
         <span class="online-pill"><i></i><span id="onlineText">online</span></span>
+        <button id="searchBtn" class="icon-btn" data-tip="Find in this conversation" aria-label="Search messages">⌕</button>
         <button id="membersToggle" class="icon-btn" data-tip="Members" aria-label="Toggle members">👥</button>
       </div>
     </header>
@@ -100,9 +102,10 @@
     <div class="composer-wrap">
       <div id="typing" class="typing"></div>
       <div id="replyBar" class="reply-bar"></div>
-      <div id="uploadPreview" class="upload-preview"></div>
+      <div id="uploadPreview" class="upload-preview" aria-live="polite"></div>
+      <div id="uploadProgress" class="upload-progress hidden" role="status" aria-live="polite"><span id="uploadProgressLabel">Uploading…</span><div class="upload-track"><i id="uploadFill"></i></div><b id="uploadPercent">0%</b><button type="button" id="uploadCancel" class="upload-cancel" aria-label="Cancel upload">✕</button></div>
       <form id="composer" class="composer">
-        <label class="attach" data-tip="Send a photo (10 MB) or video (30 MB)" aria-label="Attach a file">＋<input id="fileInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime" hidden></label>
+        <label class="attach" data-tip="Attach any file up to 30 MB" aria-label="Attach a file">＋<input id="fileInput" type="file" hidden></label>
         <textarea id="messageInput" rows="1" autocomplete="off" maxlength="4000" placeholder="Message #general"></textarea>
         <button type="button" id="emojiBtn" class="emoji-btn" aria-label="Emoji">😊</button>
         <button class="send" type="submit" aria-label="Send">➤</button>
@@ -110,7 +113,7 @@
         <div id="mentionPop" class="mention-pop hidden"></div>
         <span id="charCount" class="char-count hidden"></span>
       </form>
-      <div class="composer-hint"><span><b>Enter</b> send · <b>Shift+Enter</b> new line · <b>↑</b> edit last · <b>Ctrl+K</b> jump anywhere · <b>**bold**</b> <i>*italic*</i> <code>`code`</code> ||spoiler||</span><span id="limitHint">Photos up to 10 MB · videos up to 30 MB</span></div>
+      <div class="composer-hint"><span><b>Enter</b> send · <b>Shift+Enter</b> new line · <b>↑</b> edit last · <b>Ctrl+K</b> jump anywhere · <b>**bold**</b> <i>*italic*</i> <code>`code`</code> ||spoiler||</span><span id="limitHint">Any file up to 30 MB · music plays here</span></div>
     </div>
   </main>
 
@@ -159,6 +162,18 @@
     <p class="switch-hint"><b>↑↓</b> move · <b>Enter</b> go · <b>Esc</b> close · start with <b>#</b> or <b>@</b> to filter</p>
   </div>
 </div>
+
+<!-- ============ MESSAGE SEARCH ============ -->
+<div id="searchModal" class="modal hidden">
+  <div class="modal-card search-card">
+    <div class="modal-head"><h2>Search this conversation</h2><button id="searchClose" class="icon-btn" aria-label="Close search">✕</button></div>
+    <label class="search-field"><span>⌕</span><input id="searchInput" type="search" placeholder="Find a word, message or memory…" autocomplete="off" maxlength="120"></label>
+    <div id="searchResults" class="search-results scroll" aria-live="polite"><p class="search-empty">Start typing to search the complete conversation.</p></div>
+    <p class="search-foot">Searches messages in this channel or DM. <kbd>Esc</kbd> to close.</p>
+  </div>
+</div>
+
+<div id="dropOverlay" class="drop-overlay hidden" aria-hidden="true"><div class="drop-inner"><span>📂</span><strong>Drop it like it's hot</strong><p>Share any file up to 30 MB</p></div></div>
 
 <!-- ============ IMAGE LIGHTBOX ============ -->
 <div id="lightbox" class="lightbox hidden">

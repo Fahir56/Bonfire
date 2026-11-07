@@ -594,3 +594,161 @@ b.author:hover{text-decoration:underline;text-decoration-thickness:2px;text-unde
 .expiry{position:absolute;top:16px;left:8px;padding:3px 8px;border-radius:99px;background:#000b;backdrop-filter:blur(6px);color:#fff;font-size:11px;font-weight:700;pointer-events:auto;cursor:default}
 .media-expired{display:inline-flex;align-items:center;gap:8px;margin-top:8px;padding:12px 16px;border-radius:14px;border:2px dashed #ffffff22;color:var(--muted);font-size:13px;font-style:italic}
 .welcome .retention{font-size:12px;margin-top:8px;opacity:.8}
+
+/* =======================================================================
+   BONFIRE NEXT — quieter, sharper interface with richer file experiences
+   ======================================================================= */
+:root{
+  --bg:#101017;--rail:#0d0e15;--panel:#161821;--panel2:#1b1e29;--chat:#191b26;
+  --raise:#262a38;--raise2:#303548;--line:#30313e;
+  --text:#f6f3ef;--soft:#d8d8e0;--muted:#9a9eaf;
+  --accent:#ff9357;--accent-deep:#bf5e2e;--accent2:#ffd39a;
+  --pink:#ee81af;--green:#6bddae;
+}
+body{background:var(--bg);letter-spacing:.005em}
+.app{background:linear-gradient(180deg,#14141d,#101017)}
+.servers{background:linear-gradient(180deg,#11111b,#0c0e15);border-right:1px solid #ffffff09}
+.channels{border-radius:0;background:linear-gradient(160deg,#1d202c,#171a23 60%);border-right:1px solid #ffffff0d}
+.workspace-head{background:linear-gradient(135deg,#ff945711,#9470ff0b 80%,transparent);height:78px}
+.workspace-title b{font-size:17px;letter-spacing:-.4px}
+.workspace-title small{color:#9da1af}
+.channel-scroll{padding-top:24px}
+.section-label{letter-spacing:1.35px;color:#8993a5;font-size:10px}
+.channel{border:1px solid transparent;min-height:39px}
+.channel.active{border-color:#ff935726;background:linear-gradient(105deg,#ff935728,#ff935707);box-shadow:inset 2px 0 0 #ff9357}
+.channel.active::after{width:5px;height:5px}
+.me{background:#12141c;border-top:1px solid #ffffff10}
+.me .avatar{box-shadow:0 0 0 3px #ffffff12}
+.chat{background:radial-gradient(ellipse 70% 65% at 95% 2%,#9470ff09,transparent),var(--chat)}
+.chat::before{height:290px;background:radial-gradient(ellipse 70% 100% at 55% 100%,#ff92570a,transparent)}
+.chat-head{height:78px;background:#1c1e28e8;border-bottom:1px solid #ffffff0d}
+.chat-name b{font-size:18px;letter-spacing:-.4px}
+.chat-head p{color:#a8a9bb}
+.chat-head #searchBtn{font:500 26px 'Space Grotesk',system-ui,sans-serif;line-height:1}
+.online-pill{background:#70e6b014;border:1px solid #70e6b01a;color:#b5efcf}
+.messages{padding-top:28px}
+.message{border-left:2px solid transparent;padding-left:22px}
+.message:hover{background:linear-gradient(90deg,#ffffff07,#ffffff03);border-color:#ff93572e}
+.message.mine:hover{border-color:#ff935764}
+.message-meta b{font-weight:700;letter-spacing:-.2px}
+.message-text{color:#e0e0e8;font-size:14px;line-height:1.58}
+.message-media{border-color:#ffffff18;box-shadow:0 8px 22px #0003;border-radius:14px}
+.composer-wrap{padding-bottom:16px}
+.composer{background:#282b39;border:1px solid #4a4b5e;box-shadow:0 8px 32px #0003,inset 0 1px 0 #ffffff08;border-radius:16px;min-height:56px}
+.composer:focus-within{border-color:#ffad7b;box-shadow:0 0 0 3px #ff93571c,0 10px 28px #0005}
+.composer textarea{font-size:14px;min-height:38px}
+.composer .attach,.composer .emoji-btn{background:#ffffff08}
+.composer .attach.busy{opacity:.4;pointer-events:none}
+.composer .send:disabled{cursor:progress;opacity:.65}
+.composer-hint{color:#9495a5;line-height:1.5}
+.composer-hint b{color:#bcb9c3}
+::selection{background:#ff935776;color:white}
+:focus-visible{outline:2px solid #ffc08a!important;outline-offset:3px}
+
+/* Drag/drop is global so files are easy to add from the desktop. */
+.drop-overlay{position:fixed;inset:0;z-index:80;background:#13131bda;backdrop-filter:blur(10px);display:grid;place-items:center;padding:25px;pointer-events:none}
+.drop-inner{width:min(560px,100%);height:280px;border:3px dashed #ffc48e;border-radius:28px;background:linear-gradient(145deg,#ff925720,#8673df16);display:flex;flex-direction:column;justify-content:center;align-items:center;box-shadow:0 24px 90px #0009,0 0 90px #ff925711}
+.drop-inner span{font-size:60px;filter:drop-shadow(0 12px 14px #0006)}
+.drop-inner strong{font:700 clamp(23px,4vw,32px) 'Space Grotesk',sans-serif;margin-top:8px}
+.drop-inner p{color:#b2b3c3;font-size:16px;margin:6px 0}
+
+/* Upload staging and actual progress */
+.upload-preview{max-width:100%;min-width:0}
+.upload-chip{width:min(510px,100%);padding:9px 11px 9px 9px;background:linear-gradient(120deg,#303247,#282b39);border:1px solid #ffffff1e;box-shadow:0 8px 22px #0003;border-radius:14px}
+.upload-chip img,.upload-chip .vid{width:50px;height:50px;border-radius:11px;background:linear-gradient(135deg,#ff925733,#966cff30);font-size:23px}
+.upload-chip>span{font-weight:700;font-size:12.5px;flex:1}
+.upload-chip small{margin-top:3px;font-weight:400;font-size:11px;color:#a9afc3}
+.upload-progress{display:flex;align-items:center;gap:12px;padding:8px 12px;margin:0 0 8px;background:#272a38;border:1px solid #ffffff17;border-radius:12px;color:#e4e3eb}
+.upload-progress>span{font-size:12px;white-space:nowrap}
+.upload-progress>b{font-size:12px;font-variant-numeric:tabular-nums;min-width:34px;text-align:right}
+.upload-track{height:7px;background:#151722;border-radius:20px;overflow:hidden;flex:1}
+.upload-track i{display:block;height:100%;width:0;background:linear-gradient(90deg,#ff9357,#ffd39a);border-radius:20px;transition:width .15s}
+
+/* In-message video presentation */
+.video-card{max-width:min(500px,100%);margin-top:8px;background:#12131c;border:1px solid #ffffff1d;border-radius:17px;overflow:hidden;box-shadow:0 12px 30px #0003}
+.video-card video.message-media{margin:0;border:0;border-radius:0;max-width:100%;width:100%;max-height:340px;display:block}
+.media-caption{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:10px 13px;font-size:12px;color:#dddde5}
+.media-caption span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.media-caption small{white-space:nowrap;color:#9ba3b7}
+
+/* Music has a first-class player, not a forced file download. */
+.media-wrap.audio-wrap{display:block;width:min(450px,100%)}
+.audio-card{margin-top:9px;width:100%;padding:15px;background:linear-gradient(135deg,#342b36,#272536 50%,#232c3b);border:1px solid #ffba8b33;border-radius:20px;box-shadow:0 12px 30px #0004,inset 0 1px 0 #ffffff12;overflow:hidden;position:relative}
+.audio-card::after{content:'♫';position:absolute;right:18px;top:-22px;font-size:115px;font-weight:700;color:#ffffff04;pointer-events:none;transform:rotate(15deg)}
+.audio-top{display:flex;align-items:center;gap:12px;position:relative;z-index:1}
+.audio-art{width:56px;height:56px;display:grid;place-items:center;flex-shrink:0;border-radius:15px;background:linear-gradient(140deg,#ffbe84,#f17c65 60%,#be76b6);color:#321c28;font:700 34px 'Space Grotesk';box-shadow:inset 0 2px 0 #ffffff45,0 6px 18px #0005}
+.audio-title{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
+.audio-title strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:14px;letter-spacing:-.3px;color:#fff}
+.audio-title span{font-size:11px;color:#c8bacb}
+.audio-tag{align-self:flex-start;font:800 9px 'DM Sans',sans-serif;letter-spacing:1px;color:#ffd1a9;background:#ffaf7630;padding:5px 8px;border-radius:40px}
+.audio-wave{height:49px;display:flex;align-items:center;gap:3px;margin:14px 0 7px;opacity:.7;overflow:hidden}
+.audio-wave i{height:var(--level);min-height:3px;flex:1;max-width:11px;border-radius:7px;background:linear-gradient(180deg,#ffcb8c,#e876a6);transform-origin:center;transition:height .2s,opacity .2s}
+.audio-wave.playing i{animation:wave-pulse .75s ease-in-out infinite alternate}
+.audio-wave.playing i:nth-child(3n){animation-delay:.21s}
+.audio-wave.playing i:nth-child(5n){animation-delay:.4s}
+@keyframes wave-pulse{to{transform:scaleY(.35);opacity:.65}}
+.audio-controls{display:flex;gap:10px;align-items:center;position:relative;z-index:1}
+.audio-play{width:38px;height:38px;display:grid;place-items:center;border-radius:12px;flex-shrink:0;background:linear-gradient(135deg,#ffd298,#ff9b65);color:#281827;font-size:14px;font-weight:900;box-shadow:0 3px 0 #b46c49}
+.audio-play:hover{filter:brightness(1.12)}
+.audio-play:active{transform:translateY(2px);box-shadow:0 1px 0 #b46c49}
+.audio-time{color:#c9c4d5;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;min-width:84px;text-align:center}
+.audio-seek{min-width:20px;flex:1;accent-color:#ffb77b;cursor:pointer;height:18px}
+.audio-seek:disabled{opacity:.35;cursor:default}
+.audio-speed{min-width:38px;height:30px;padding:0 5px;border-radius:8px;background:#ffffff11;color:#ddd4dc;font-size:11px;font-weight:800}
+.audio-speed:hover{background:#ffffff20}
+.audio-error{display:block;font-size:11px;color:#ffc6a2;margin:12px 0 0}
+.audio-error a{color:#fff}
+.audio-card .inline-audio{display:none}
+.audio-wrap .expiry{position:static;display:inline-flex;align-items:center;margin:6px 0 0 10px;background:#0004;color:#bdb4c1;font-size:10px}
+
+/* Other formats: an attractive, clear and safe file download. */
+.media-wrap.file-wrap{display:block;max-width:min(450px,100%)}
+.file-card{max-width:450px;margin-top:9px;padding:12px;display:flex;align-items:center;gap:13px;text-decoration:none;background:linear-gradient(115deg,#2d3041,#252936);border:1px solid #ffffff20;border-radius:16px;transition:background .2s,transform .2s,box-shadow .2s;color:var(--text);box-shadow:0 7px 24px #0003}
+.file-card:hover{background:linear-gradient(115deg,#383747,#2e3242);transform:translateY(-2px);box-shadow:0 12px 28px #0004}
+.file-icon{width:52px;height:52px;display:grid;place-items:center;background:#ffffff0d;border-radius:12px;flex-shrink:0;font-size:26px}
+.file-detail{flex:1;min-width:0}
+.file-detail strong{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:13px}
+.file-detail small{display:block;color:#a5acbe;margin-top:5px;font-size:11px}
+.file-download{font-size:20px;width:34px;height:34px;border-radius:10px;background:#ffb47724;color:#ffc99b;display:grid;place-items:center}
+.file-wrap .expiry{position:static;display:inline-flex;margin:7px 0 0 11px;font-size:10px;background:#0003;color:#aeb3c5}
+.media-expired{background:#ffffff06;border-radius:12px}
+
+/* Search interface */
+.search-card{width:min(610px,100%);height:min(620px,85vh);display:flex;flex-direction:column;overflow:hidden;padding:22px}
+.search-field{background:#10121c;border:1px solid #5b5260;border-radius:13px;display:flex;align-items:center;gap:12px;padding:2px 14px;flex-shrink:0}
+.search-field span{font-size:27px;color:#ffb47e}
+.search-field input{width:100%;padding:13px 0;background:transparent;border:0;outline:none;color:#fff;font-size:14px}
+.search-field input::-webkit-search-cancel-button{cursor:pointer}
+.search-results{flex:1;min-height:0;overflow:auto;margin-top:12px}
+.search-empty{color:#999eaf;font-size:13px;text-align:center;padding:28px 12px}
+.search-hit{width:100%;text-align:left;display:block;padding:13px 14px;color:var(--text);border-bottom:1px solid #ffffff0e;border-radius:10px}
+.search-hit:hover{background:#ffb17412}
+.search-hit>span{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.search-hit b{font-size:13px;color:#ffca9b}
+.search-hit time{font-size:11px;color:#929aac;white-space:nowrap}
+.search-hit p{font-size:13px;line-height:1.5;color:#d3d2dc;overflow-wrap:anywhere;margin:7px 0 0}
+.search-foot{margin:12px 0 0;color:#9299aa;font-size:11px}
+.search-foot kbd{padding:2px 5px;background:#ffffff12;border-radius:5px}
+
+/* Softened interaction for usability: don't throw the UI around on hover. */
+.btn:hover,.icon-btn:hover,.mini-btn:hover,.server-add:hover,.send:hover,.attach:hover,.emoji-btn:hover,.friend-row button:hover,.jump-btn:hover{animation:none}
+.channel:hover{transform:none}
+.server-logo:hover{animation:none;transform:translateY(-2px)}
+@media(max-width:680px){
+  .chat-head{height:66px}
+  .message{padding-left:12px;padding-right:12px}
+  .audio-card{padding:12px}
+  .audio-tag{display:none}
+  .audio-art{width:46px;height:46px;font-size:29px}
+  .audio-time{min-width:74px;font-size:10px}
+  .audio-controls{gap:7px}
+  .audio-play{width:34px;height:34px}
+  .audio-speed{min-width:32px}
+  .upload-progress{gap:7px}
+  .upload-progress>span{font-size:10px}
+  .search-card{height:min(600px,85vh);padding:16px}
+}
+@media(prefers-reduced-motion:reduce){.audio-wave.playing i{animation:none}}
+
+.upload-cancel{flex-shrink:0;width:25px;height:25px;border-radius:7px;color:#c6bdc8;background:#ffffff10;font-size:11px}
+.upload-cancel:hover{background:#ff7a7a35;color:#fff}
