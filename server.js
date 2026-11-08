@@ -9,6 +9,8 @@ const multer = require('multer');
 const path = require('path');
 const { MAX_FILE_BYTES, cleanFilename, servedMime, inlineMedia, retentionHours, byteRange } = require('./file-types');
 const { normalizeRank, isShiftAdminAccount } = require('./rank-system');
+const { MAX_AVATAR_BYTES, validateDisplayName, validateUsername, avatarMime, validModerationReason, canModerateTarget } = require('./moderation-utils');
+const { installEvidenceExports } = require('./evidence-export');
 
 const app = express();
 const server = http.createServer(app);
@@ -24,6 +26,7 @@ const LIMITS = { fileMaxMB: 30, photoMaxMB: 30, videoMaxMB: 30, audioMaxMB: 30,
   photoHours: 72, videoHours: 12, audioHours: 72, fileHours: 72,
   messageDays: Math.max(1, parseInt(process.env.MESSAGE_RETENTION_DAYS, 10) || 90) };
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 1, fields: 0 } });
+const uploadAvatar = multer({storage:multer.memoryStorage(),limits:{fileSize:MAX_AVATAR_BYTES,files:1,fields:0}});
 app.use(express.static(path.join(__dirname, 'public')));
 const query = (sql, args=[]) => pool.query(sql, args);
 
@@ -35,6 +38,14 @@ async function initDb() {
   CREATE TABLE IF NOT EXISTS attachments (id UUID PRIMARY KEY, owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, filename TEXT NOT NULL, mime_type TEXT NOT NULL, data BYTEA NOT NULL, size_bytes BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
   CREATE TABLE IF NOT EXISTS messages (id UUID PRIMARY KEY, server_id UUID NOT NULL REFERENCES servers(id) ON DELETE CASCADE, channel_id UUID NOT NULL REFERENCES channels(id) ON DELETE CASCADE, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, content TEXT NOT NULL DEFAULT '', attachment_id UUID REFERENCES attachments(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
   ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_rank TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_mime TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_data BYTEA;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_version INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_at TIMESTAMPTZ;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_reason TEXT;
+  ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_by_admin UUID;
+  CREATE TABLE IF NOT EXISTS moderation_audit (id UUID PRIMARY KEY, admin_id UUID NOT NULL REFERENCES users(id), action TEXT NOT NULL, target_user_id UUID, server_id UUID, channel_id UUID, message_id UUID, details JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+  CREATE INDEX IF NOT EXISTS moderation_audit_recent ON moderation_audit(created_at DESC);
   CREATE TABLE IF NOT EXISTS rank_audit (id UUID PRIMARY KEY, target_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, assigned_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, old_rank TEXT, new_rank TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
   CREATE INDEX IF NOT EXISTS rank_audit_recent ON rank_audit(created_at DESC);
   ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachment_id UUID REFERENCES attachments(id) ON DELETE SET NULL;
@@ -58,7 +69,16 @@ async function initDb() {
   await query(`UPDATE attachments SET expires_at=created_at+(CASE WHEN mime_type LIKE 'video/%' THEN make_interval(hours=>$1) WHEN mime_type LIKE 'audio/%' THEN make_interval(hours=>$2) WHEN mime_type LIKE 'image/%' THEN make_interval(hours=>$3) ELSE make_interval(hours=>$4) END) WHERE expires_at IS NULL`,[LIMITS.videoHours,LIMITS.audioHours,LIMITS.photoHours,LIMITS.fileHours]);
 }
 function tokenFor(user) { return jwt.sign({ sub: user.id, username: user.username, name: user.display_name }, JWT_SECRET, { expiresIn: '14d' }); }
-function auth(req,res,next) { const h=req.headers.authorization||''; const t=h.startsWith('Bearer ')?h.slice(7):''; try { req.user=jwt.verify(t,JWT_SECRET); next(); } catch { res.status(401).json({error:'Please sign in again.'}); } }
+async function auth(req,res,next) {
+  const h=req.headers.authorization||'',t=h.startsWith('Bearer ')?h.slice(7):'';
+  let decoded;
+  try { decoded=jwt.verify(t,JWT_SECRET); } catch { return res.status(401).json({error:'Please sign in again.'}); }
+  try { const found=await query('SELECT id,banned_at FROM users WHERE id=$1',[decoded.sub]);
+    if(!found.rowCount)return res.status(401).json({error:'Account no longer exists.'});
+    if(found.rows[0].banned_at)return res.status(403).json({error:'This account is banned from Bonfire.'});
+    req.user=decoded;next();
+  } catch(e){console.error(e);res.status(500).json({error:'Could not verify account.'});}
+}
 // You can DM friends, or anyone you share a server with.
 const CAN_DM_SQL='SELECT 1 WHERE EXISTS(SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2) OR EXISTS(SELECT 1 FROM server_members a JOIN server_members b ON a.server_id=b.server_id WHERE a.user_id=$1 AND b.user_id=$2)';
 function cleanName(s, fallback='Friend') { return String(s||fallback).trim().replace(/[<>\u0000-\u001f]/g,'').slice(0,32)||fallback; }
@@ -75,10 +95,39 @@ async function shiftOnly(req,res,next) {
 }
 if (!isUuid(SHIFT_ADMIN_USER_ID)) console.warn('Shift admin panel is disabled: set SHIFT_ADMIN_USER_ID to the account ID of @shift.');
 const PAGE = 50;
+async function logModeration(adminId,action,values={}) {
+  const {targetUserId=null,serverId=null,channelId=null,messageId=null,...details}=values;
+  await query('INSERT INTO moderation_audit(id,admin_id,action,target_user_id,server_id,channel_id,message_id,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb)',[crypto.randomUUID(),adminId,action,targetUserId,serverId,channelId,messageId,JSON.stringify(details)]);
+}
+async function editableTarget(id,adminId,res) {
+  if(!isUuid(id)){res.status(404).json({error:'User not found.'});return null;}
+  const found=await query('SELECT id,username,display_name,avatar_version,banned_at FROM users WHERE id=$1',[id]);
+  if(!found.rowCount){res.status(404).json({error:'User not found.'});return null;}
+  if(!canModerateTarget(adminId,id,found.rows[0].username,SHIFT_ADMIN_USER_ID)){res.status(403).json({error:'You cannot moderate Shift or your own account.'});return null;}
+  return found.rows[0];
+}
+function avatarUpload(req,res,next){uploadAvatar.single('avatar')(req,res,err=>err?res.status(err.code==='LIMIT_FILE_SIZE'?413:400).json({error:'Profile images must be PNG, JPG, GIF or WebP and 2 MB or smaller.'}):next());}
+function emitProfile(id,changes){
+  for(const s of io.sockets.sockets.values())if(s.user?.sub===id){
+    if(changes.display_name!==undefined)s.user.name=changes.display_name;
+    if(changes.username!==undefined)s.user.username=changes.username;
+  }
+  io.emit('user:profile-updated',{userId:id,...changes});
+}
+async function saveAvatar(req,res,targetId,adminEdit=false){
+  try{const mime=avatarMime(req.file?.buffer);if(!mime)return res.status(400).json({error:'Use a valid PNG, JPEG, GIF or WebP image under 2 MB.'});
+    const found=await query('UPDATE users SET avatar_data=$1,avatar_mime=$2,avatar_version=avatar_version+1 WHERE id=$3 RETURNING display_name,avatar_version',[req.file.buffer,mime,targetId]);
+    if(!found.rowCount)return res.sendStatus(404);
+    if(adminEdit)await logModeration(req.user.sub,'profile_avatar_replace',{targetUserId:targetId});
+    emitProfile(targetId,{display_name:found.rows[0].display_name,avatar_version:found.rows[0].avatar_version});
+    res.json({ok:true,avatar_version:found.rows[0].avatar_version});
+  }catch(e){console.error(e);res.status(500).json({error:'Could not update profile photo.'});}
+}
+
 // Channel and DM messages share one shape: author, attachment, the message it replies to, edit time and reactions.
 const MSG_SQL = {
-  channel: `SELECT m.id,m.channel_id,m.content,m.attachment_id,m.created_at,m.edited_at,m.reply_to,u.id AS user_id,u.username,u.display_name,u.profile_rank,a.filename,a.mime_type,a.size_bytes AS attachment_size_bytes,a.expires_at AS attachment_expires_at,(a.purged_at IS NOT NULL OR a.expires_at<=NOW()) AS attachment_expired,r.content AS reply_content,r.attachment_id AS reply_attachment,ru.id AS reply_user_id,ru.display_name AS reply_name FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN attachments a ON a.id=m.attachment_id LEFT JOIN messages r ON r.id=m.reply_to LEFT JOIN users ru ON ru.id=r.user_id`,
-  dm: `SELECT m.id,m.sender_id,m.recipient_id,m.content,m.attachment_id,m.created_at,m.edited_at,m.reply_to,u.id AS user_id,u.username,u.display_name,u.profile_rank,a.filename,a.mime_type,a.size_bytes AS attachment_size_bytes,a.expires_at AS attachment_expires_at,(a.purged_at IS NOT NULL OR a.expires_at<=NOW()) AS attachment_expired,r.content AS reply_content,r.attachment_id AS reply_attachment,ru.id AS reply_user_id,ru.display_name AS reply_name FROM direct_messages m JOIN users u ON u.id=m.sender_id LEFT JOIN attachments a ON a.id=m.attachment_id LEFT JOIN direct_messages r ON r.id=m.reply_to LEFT JOIN users ru ON ru.id=r.sender_id`
+  channel: `SELECT m.id,m.channel_id,m.content,m.attachment_id,m.created_at,m.edited_at,m.edited_by_admin,m.reply_to,u.id AS user_id,u.username,u.display_name,u.profile_rank,u.avatar_version,a.filename,a.mime_type,a.size_bytes AS attachment_size_bytes,a.expires_at AS attachment_expires_at,(a.purged_at IS NOT NULL OR a.expires_at<=NOW()) AS attachment_expired,r.content AS reply_content,r.attachment_id AS reply_attachment,ru.id AS reply_user_id,ru.display_name AS reply_name FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN attachments a ON a.id=m.attachment_id LEFT JOIN messages r ON r.id=m.reply_to LEFT JOIN users ru ON ru.id=r.user_id`,
+  dm: `SELECT m.id,m.sender_id,m.recipient_id,m.content,m.attachment_id,m.created_at,m.edited_at,m.reply_to,u.id AS user_id,u.username,u.display_name,u.profile_rank,u.avatar_version,a.filename,a.mime_type,a.size_bytes AS attachment_size_bytes,a.expires_at AS attachment_expires_at,(a.purged_at IS NOT NULL OR a.expires_at<=NOW()) AS attachment_expired,r.content AS reply_content,r.attachment_id AS reply_attachment,ru.id AS reply_user_id,ru.display_name AS reply_name FROM direct_messages m JOIN users u ON u.id=m.sender_id LEFT JOIN attachments a ON a.id=m.attachment_id LEFT JOIN direct_messages r ON r.id=m.reply_to LEFT JOIN users ru ON ru.id=r.sender_id`
 };
 async function reactionsFor(ids){const map=new Map();if(!ids.length)return map;const r=await query('SELECT message_id,emoji,array_agg(user_id::text ORDER BY created_at) AS users FROM reactions WHERE message_id=ANY($1::uuid[]) GROUP BY message_id,emoji ORDER BY MIN(created_at)',[ids]);for(const x of r.rows){if(!map.has(x.message_id))map.set(x.message_id,[]);map.get(x.message_id).push({emoji:x.emoji,users:x.users});}return map;}
 async function hydrate(rows){const reacts=await reactionsFor(rows.map(r=>r.id));return rows.map(({reply_content,reply_attachment,reply_user_id,reply_name,...m})=>({...m,reply:m.reply_to?(reply_user_id?{id:m.reply_to,user_id:reply_user_id,display_name:reply_name,content:String(reply_content||'').slice(0,200),attachment:!!reply_attachment}:{id:m.reply_to,deleted:true}):null,reactions:reacts.get(m.id)||[]}));}
@@ -88,26 +137,138 @@ async function messagePage(kind,where,args,beforeId){const table=kind==='dm'?'di
 async function isOwner(serverId,uid){return (await query('SELECT 1 FROM servers WHERE id=$1 AND owner_id=$2',[serverId,uid])).rowCount>0;}
 app.get('/health', (_req,res)=>res.json({ok:true,app:'Bonfire'}));
 app.post('/api/auth/signup', async (req,res)=>{ try { const username=String(req.body.username||'').trim().toLowerCase(); const password=String(req.body.password||''); const name=cleanName(username); if(!/^[a-z0-9_]{3,24}$/.test(username)) return res.status(400).json({error:'Username must be 3–24 characters using letters, numbers, or underscores.'}); if(password.length<8) return res.status(400).json({error:'Password must be at least 8 characters.'}); const id=crypto.randomUUID(); const hash=await bcrypt.hash(password,12); const u=(await query('INSERT INTO users(id,username,password_hash,display_name) VALUES($1,$2,$3,$4) RETURNING id,username,display_name',[id,username,hash,name])).rows[0]; let shared=(await query("SELECT id FROM servers WHERE name='Bonfire' ORDER BY created_at LIMIT 1")).rows[0]; if(!shared){const sid=crypto.randomUUID();const invite=crypto.randomBytes(6).toString('hex');await query('INSERT INTO servers(id,name,owner_id,invite_code) VALUES($1,$2,$3,$4)',[sid,'Bonfire',id,invite]);await query('INSERT INTO channels(id,server_id,name,topic) VALUES($1,$2,$3,$4),($5,$2,$6,$7)',[crypto.randomUUID(),sid,'general','Welcome to Bonfire.',crypto.randomUUID(),'memes','Good memes only.']);shared={id:sid};} await query('INSERT INTO server_members(server_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[shared.id,id]); res.json({token:tokenFor(u),user:u}); } catch(e) { if(e.code==='23505') return res.status(409).json({error:'That username is already taken.'}); console.error(e); res.status(500).json({error:'Could not create account.'}); }});
-app.post('/api/auth/signin', async(req,res)=>{ try { const username=String(req.body.username||'').trim().toLowerCase(); const r=await query('SELECT id,username,password_hash,display_name FROM users WHERE username=$1',[username]); const u=r.rows[0]; if(!u || !await bcrypt.compare(String(req.body.password||''),u.password_hash)) return res.status(401).json({error:'Username or password is incorrect.'}); res.json({token:tokenFor(u),user:{id:u.id,username:u.username,display_name:u.display_name}}); } catch(e){console.error(e);res.status(500).json({error:'Sign in failed.'});}});
-app.get('/api/me',auth,async(req,res)=>{try{const r=await query('SELECT id,username,display_name,profile_rank,created_at FROM users WHERE id=$1',[req.user.sub]);if(!r.rowCount)return res.status(401).json({error:'Account no longer exists.'});const u=r.rows[0];res.json({user:{...u,is_admin:await isShiftAdmin(u.id)}})}catch(e){console.error(e);res.status(500).json({error:'Could not load your account.'})}});
+app.post('/api/auth/signin', async(req,res)=>{ try { const username=String(req.body.username||'').trim().toLowerCase(); const r=await query('SELECT id,username,password_hash,display_name,banned_at FROM users WHERE username=$1',[username]); const u=r.rows[0]; if(!u || !await bcrypt.compare(String(req.body.password||''),u.password_hash)) return res.status(401).json({error:'Username or password is incorrect.'}); if(u.banned_at)return res.status(403).json({error:'This account has been banned.'}); res.json({token:tokenFor(u),user:{id:u.id,username:u.username,display_name:u.display_name}}); } catch(e){console.error(e);res.status(500).json({error:'Sign in failed.'});}});
+app.get('/api/me',auth,async(req,res)=>{try{const r=await query('SELECT id,username,display_name,profile_rank,avatar_version,created_at FROM users WHERE id=$1',[req.user.sub]);if(!r.rowCount)return res.status(401).json({error:'Account no longer exists.'});const u=r.rows[0];res.json({user:{...u,is_admin:await isShiftAdmin(u.id)}})}catch(e){console.error(e);res.status(500).json({error:'Could not load your account.'})}});
 // Profile ranks are manually granted by @shift. There is no activity/score-based grading.
 app.get('/api/users/:id/profile',auth,async(req,res)=>{try{
   if(!isUuid(req.params.id))return res.status(404).json({error:'Profile not found.'});
-  const result=await query('SELECT id,username,display_name,profile_rank,created_at FROM users WHERE id=$1',[req.params.id]);
+  const result=await query('SELECT id,username,display_name,profile_rank,avatar_version,created_at FROM users WHERE id=$1',[req.params.id]);
   if(!result.rowCount)return res.status(404).json({error:'Profile not found.'});
   res.json({profile:result.rows[0]});
 }catch(e){console.error(e);res.status(500).json({error:'Could not load profile.'});}});
+
+// Avatar URLs are opaque UUIDs, safe for same-origin image tags; no external image URLs are accepted.
+app.get('/api/users/:id/avatar',async(req,res)=>{try{
+  if(!isUuid(req.params.id))return res.sendStatus(404);
+  const r=await query('SELECT avatar_data,avatar_mime FROM users WHERE id=$1',[req.params.id]);
+  if(!r.rowCount||!r.rows[0].avatar_data)return res.sendStatus(404);
+  res.set({'Content-Type':r.rows[0].avatar_mime,'Content-Disposition':'inline','X-Content-Type-Options':'nosniff','Cache-Control':'public, max-age=60','Content-Security-Policy':"default-src 'none'; sandbox"});
+  res.send(r.rows[0].avatar_data);
+}catch(e){console.error(e);res.sendStatus(500);}});
+app.patch('/api/me/profile',auth,async(req,res)=>{try{
+  const name=validateDisplayName(req.body?.display_name);if(!name)return res.status(400).json({error:'Display name must be 1–32 characters.'});
+  const d=await query('UPDATE users SET display_name=$1 WHERE id=$2 RETURNING id,username,display_name,avatar_version',[name,req.user.sub]);
+  emitProfile(req.user.sub,{display_name:name,avatar_version:d.rows[0].avatar_version});res.json({user:d.rows[0]});
+}catch(e){console.error(e);res.status(500).json({error:'Could not save your name.'});}});
+app.patch('/api/me/username',auth,async(req,res)=>{try{
+  const username=validateUsername(req.body?.username);
+  if(!username)return res.status(400).json({error:'Usernames must have 3–24 lowercase letters, numbers or underscores.'});
+  if(username==='shift' && req.user.sub!==SHIFT_ADMIN_USER_ID)return res.status(403).json({error:'The shift username is reserved.'});
+  if(await isShiftAdmin(req.user.sub))return res.status(403).json({error:'The Shift administrator username is locked for account safety.'});
+  const old=(await query('SELECT username FROM users WHERE id=$1',[req.user.sub])).rows[0]?.username;
+  const changed=await query('UPDATE users SET username=$1 WHERE id=$2 RETURNING id,username,display_name,avatar_version',[username,req.user.sub]);
+  if(old!==username)emitProfile(req.user.sub,{username,display_name:changed.rows[0].display_name,avatar_version:changed.rows[0].avatar_version});
+  res.json({user:changed.rows[0]});
+}catch(e){if(e.code==='23505')return res.status(409).json({error:'That username is already taken.'});console.error(e);res.status(500).json({error:'Could not change username.'});}});
+app.post('/api/me/avatar',auth,avatarUpload,(req,res)=>saveAvatar(req,res,req.user.sub));
+app.delete('/api/me/avatar',auth,async(req,res)=>{try{
+  const d=await query('UPDATE users SET avatar_mime=NULL,avatar_data=NULL,avatar_version=avatar_version+1 WHERE id=$1 RETURNING display_name,avatar_version',[req.user.sub]);
+  emitProfile(req.user.sub,d.rows[0]);res.json({ok:true,avatar_version:d.rows[0].avatar_version});
+}catch(e){console.error(e);res.status(500).json({error:'Could not remove photo.'});}});
+// Verified Shift moderation, logged and broadcast; DMs are never editable by admins.
+app.patch('/api/admin/users/:id/profile',auth,shiftOnly,async(req,res)=>{try{
+  const target=await editableTarget(req.params.id,req.user.sub,res);if(!target)return;
+  if(req.body?.display_name===undefined && req.body?.username===undefined)return res.status(400).json({error:'No profile changes provided.'});
+  const name=req.body.display_name===undefined ? target.display_name : validateDisplayName(req.body.display_name);
+  const username=req.body.username===undefined ? target.username : validateUsername(req.body.username);
+  if(!name||!username)return res.status(400).json({error:'Enter a valid display name (1–32 characters) and username (3–24 letters, digits or underscores).'});
+  if(username==='shift')return res.status(403).json({error:'The shift username is reserved.'});
+  const d=await query('UPDATE users SET display_name=$1,username=$2 WHERE id=$3 RETURNING id,username,display_name,avatar_version',[name,username,target.id]);
+  await logModeration(req.user.sub,'profile_edit',{targetUserId:target.id,oldName:target.display_name,newName:name,oldUsername:target.username,newUsername:username});
+  emitProfile(target.id,d.rows[0]);res.json({ok:true,user:d.rows[0]});
+}catch(e){if(e.code==='23505')return res.status(409).json({error:'Username already taken.'});console.error(e);res.status(500).json({error:'Could not change profile.'});}});
+app.post('/api/admin/users/:id/avatar',auth,shiftOnly,async(req,res,next)=>{try{const target=await editableTarget(req.params.id,req.user.sub,res);if(!target)return;next();}catch(e){console.error(e);res.sendStatus(500);}},avatarUpload,(req,res)=>saveAvatar(req,res,req.params.id,true));
+app.delete('/api/admin/users/:id/avatar',auth,shiftOnly,async(req,res)=>{try{
+  const target=await editableTarget(req.params.id,req.user.sub,res);if(!target)return;
+  const d=await query('UPDATE users SET avatar_mime=NULL,avatar_data=NULL,avatar_version=avatar_version+1 WHERE id=$1 RETURNING display_name,avatar_version',[target.id]);
+  await logModeration(req.user.sub,'profile_avatar_remove',{targetUserId:target.id});emitProfile(target.id,d.rows[0]);res.json({ok:true});
+}catch(e){console.error(e);res.status(500).json({error:'Could not remove photo.'});}});
+app.patch('/api/admin/users/:id/ban',auth,shiftOnly,async(req,res)=>{try{
+  const target=await editableTarget(req.params.id,req.user.sub,res);if(!target)return;
+  if(typeof req.body?.banned!=='boolean')return res.status(400).json({error:'Choose ban or unban.'});
+  const reason=validModerationReason(req.body.reason||'');
+  await query('UPDATE users SET banned_at=CASE WHEN $1 THEN NOW() ELSE NULL END,banned_reason=CASE WHEN $1 THEN $2 ELSE NULL END WHERE id=$3',[req.body.banned,reason,target.id]);
+  await logModeration(req.user.sub,req.body.banned?'user_ban':'user_unban',{targetUserId:target.id,reason});
+  if(req.body.banned){io.to('user:'+target.id).emit('account:banned');for(const s of io.sockets.sockets.values())if(s.user?.sub===target.id)s.disconnect(true);}
+  res.json({ok:true,banned:req.body.banned});
+}catch(e){console.error(e);res.status(500).json({error:'Ban operation failed.'});}});
+app.post('/api/admin/servers/:serverId/users/:userId/kick',auth,shiftOnly,async(req,res)=>{try{
+  const {serverId,userId}=req.params;if(!isUuid(serverId))return res.sendStatus(404);
+  const target=await editableTarget(userId,req.user.sub,res);if(!target)return;
+  const s=(await query('SELECT id,owner_id FROM servers WHERE id=$1',[serverId])).rows[0];
+  if(!s)return res.status(404).json({error:'Server not found.'});
+  if(s.owner_id===userId)return res.status(403).json({error:'Server owners cannot be kicked.'});
+  const removed=await query('DELETE FROM server_members WHERE server_id=$1 AND user_id=$2 RETURNING user_id',[serverId,userId]);
+  if(!removed.rowCount)return res.status(404).json({error:'User is not a member of that server.'});
+  await logModeration(req.user.sub,'server_kick',{targetUserId:userId,serverId,reason:validModerationReason(req.body?.reason||'')});
+  io.to('user:'+userId).emit('membership:revoked',{serverId});
+  const memberChannels=(await query('SELECT id FROM channels WHERE server_id=$1',[serverId])).rows.map(x=>'channel:'+x.id);
+  for(const sock of io.sockets.sockets.values())if(sock.user?.sub===userId){sock.leave('srv:'+serverId);for(const r of memberChannels)sock.leave(r);sock.leave('voice:'+serverId);}
+  io.to('srv:'+serverId).emit('members:changed',{serverId});res.json({ok:true});
+}catch(e){console.error(e);res.status(500).json({error:'Could not kick user.'});}});
+app.post('/api/admin/channels/:id/purge',auth,shiftOnly,async(req,res)=>{try{
+  if(!isUuid(req.params.id))return res.sendStatus(404);
+  const c=(await query('SELECT id,server_id,name FROM channels WHERE id=$1',[req.params.id])).rows[0];if(!c)return res.sendStatus(404);
+  const db=await pool.connect();let count=0;
+  try{await db.query('BEGIN');
+    const ids=await db.query('SELECT id,attachment_id FROM messages WHERE channel_id=$1 FOR UPDATE',[c.id]);count=ids.rowCount;
+    await db.query('DELETE FROM reactions WHERE message_id=ANY($1::uuid[])',[ids.rows.map(x=>x.id)]);
+    await db.query('DELETE FROM messages WHERE channel_id=$1',[c.id]);
+    const attachments=ids.rows.map(x=>x.attachment_id).filter(Boolean);
+    if(attachments.length)await db.query('DELETE FROM attachments a WHERE a.id=ANY($1::uuid[]) AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.attachment_id=a.id) AND NOT EXISTS(SELECT 1 FROM direct_messages d WHERE d.attachment_id=a.id)',[attachments]);
+    await db.query('COMMIT');
+  }catch(e){await db.query('ROLLBACK').catch(()=>{});throw e;}finally{db.release();}
+  await logModeration(req.user.sub,'channel_purge',{serverId:c.server_id,channelId:c.id,count,channelName:c.name});
+  io.to('channel:'+c.id).emit('channel:purged',{channelId:c.id,count});
+  res.json({ok:true,count});
+}catch(e){console.error(e);res.status(500).json({error:'Could not purge channel.'});}});
+app.patch('/api/admin/messages/:id',auth,shiftOnly,async(req,res)=>{try{
+  if(!isUuid(req.params.id))return res.sendStatus(404);
+  const content=String(req.body?.content||'').trim();if(!content||content.length>4000)return res.status(400).json({error:'Enter a message between 1 and 4000 characters.'});
+  const m=(await query('SELECT id,content,user_id,channel_id,server_id FROM messages WHERE id=$1',[req.params.id])).rows[0];if(!m)return res.sendStatus(404);
+  await query('UPDATE messages SET content=$1,edited_at=NOW(),edited_by_admin=$2 WHERE id=$3',[content,req.user.sub,m.id]);
+  await logModeration(req.user.sub,'message_edit',{targetUserId:m.user_id,serverId:m.server_id,channelId:m.channel_id,messageId:m.id,before:m.content,after:content});
+  io.to('channel:'+m.channel_id).emit('message:updated',await getMessage('channel',m.id));res.json({ok:true});
+}catch(e){console.error(e);res.status(500).json({error:'Could not edit message.'});}});
+app.delete('/api/admin/messages/:id',auth,shiftOnly,async(req,res)=>{try{
+  if(!isUuid(req.params.id))return res.sendStatus(404);
+  const m=(await query('SELECT id,user_id,channel_id,server_id,attachment_id,content FROM messages WHERE id=$1',[req.params.id])).rows[0];if(!m)return res.sendStatus(404);
+  await query('DELETE FROM reactions WHERE message_id=$1',[m.id]);await query('DELETE FROM messages WHERE id=$1',[m.id]);
+  if(m.attachment_id)await query('DELETE FROM attachments a WHERE a.id=$1 AND NOT EXISTS(SELECT 1 FROM messages WHERE attachment_id=a.id) AND NOT EXISTS(SELECT 1 FROM direct_messages WHERE attachment_id=a.id)',[m.attachment_id]);
+  await logModeration(req.user.sub,'message_delete',{targetUserId:m.user_id,serverId:m.server_id,channelId:m.channel_id,messageId:m.id,previousText:m.content});
+  io.to('channel:'+m.channel_id).emit('message:deleted',{id:m.id});res.json({ok:true});
+}catch(e){console.error(e);res.status(500).json({error:'Could not delete message.'});}});
+// Admin-only, one-time streamed evidence archive downloads (server or channel).
+installEvidenceExports(app,{auth,shiftOnly,isUuid,isShiftAdmin,pool,query,logModeration});
+app.get('/api/admin/servers',auth,shiftOnly,async(req,res)=>{try{
+  const ss=await query('SELECT id,name,owner_id FROM servers ORDER BY created_at');
+  const cs=await query('SELECT id,server_id,name FROM channels ORDER BY created_at');
+  res.json({servers:ss.rows,channels:cs.rows});
+}catch(e){console.error(e);res.status(500).json({error:'Could not load server management.'});}});
+app.get('/api/admin/audit',auth,shiftOnly,async(req,res)=>{try{
+  const r=await query('SELECT a.created_at,a.action,a.details,u.username AS target_username FROM moderation_audit a LEFT JOIN users u ON u.id=a.target_user_id ORDER BY a.created_at DESC LIMIT 75');res.json({events:r.rows});
+}catch(e){console.error(e);res.status(500).json({error:'Audit log unavailable.'});}});
 app.get('/api/admin/users',auth,shiftOnly,async(req,res)=>{try{
   const q=String(req.query.q||'').trim().slice(0,64);
   const offset=Math.min(10000,Math.max(0,Number.parseInt(req.query.offset,10)||0));
-  const found=await query(`SELECT id,username,display_name,profile_rank,created_at FROM users
+  const found=await query(`SELECT id,username,display_name,profile_rank,avatar_version,banned_at,created_at FROM users
     WHERE (strpos(lower(username),lower($1))>0 OR strpos(lower(display_name),lower($1))>0)
     ORDER BY created_at ASC LIMIT 50 OFFSET $2`,[q,offset]);
   const counts=await query(`SELECT COALESCE(profile_rank,'NONE') AS rank,COUNT(*)::int AS amount FROM users GROUP BY 1`);
   const total=await query(`SELECT COUNT(*)::int AS total FROM users WHERE (strpos(lower(username),lower($1))>0 OR strpos(lower(display_name),lower($1))>0)`,[q]);
   const history=await query(`SELECT ra.created_at,ra.old_rank,ra.new_rank,u.username AS target_username
     FROM rank_audit ra JOIN users u ON u.id=ra.target_user_id ORDER BY ra.created_at DESC LIMIT 12`);
-  res.json({users:found.rows,total:total.rows[0].total,offset,counts:counts.rows,history:history.rows});
+  const recent=await query('SELECT a.created_at,a.action,a.details,u.username AS target_username FROM moderation_audit a LEFT JOIN users u ON u.id=a.target_user_id ORDER BY a.created_at DESC LIMIT 20');res.json({users:found.rows,total:total.rows[0].total,offset,counts:counts.rows,history:history.rows,moderationHistory:recent.rows});
 }catch(e){console.error(e);res.status(500).json({error:'Could not load admin panel.'});}});
 app.patch('/api/admin/users/:id/rank',auth,shiftOnly,async(req,res)=>{try{
   if(!isUuid(req.params.id))return res.status(404).json({error:'User not found.'});
@@ -137,7 +298,7 @@ app.post('/api/servers/join',auth,async(req,res)=>{try{const code=String(req.bod
 app.get('/api/servers/:id/channels',auth,async(req,res)=>{try{const m=await query('SELECT 1 FROM server_members WHERE server_id=$1 AND user_id=$2',[req.params.id,req.user.sub]);if(!m.rowCount)return res.status(403).json({error:'You are not a member of this server.'});const r=await query("SELECT c.id,c.server_id,c.name,c.topic,c.kind,(SELECT MAX(created_at) FROM messages m WHERE m.channel_id=c.id) AS last_message_at FROM channels c WHERE c.server_id=$1 ORDER BY c.created_at",[req.params.id]);res.json({channels:r.rows});}catch(e){console.error(e);res.status(500).json({error:'Could not load channels.'});}});
 app.post('/api/servers/:id/channels',auth,async(req,res)=>{try{const m=await query('SELECT 1 FROM server_members WHERE server_id=$1 AND user_id=$2',[req.params.id,req.user.sub]);if(!m.rowCount)return res.status(403).json({error:'Not a server member.'});const name=String(req.body.name||'').toLowerCase().trim().replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'').slice(0,40);if(!name)return res.status(400).json({error:'Enter a channel name.'});const c={id:crypto.randomUUID(),server_id:req.params.id,name,topic:''};await query('INSERT INTO channels(id,server_id,name,topic) VALUES($1,$2,$3,$4)',[c.id,c.server_id,c.name,c.topic]);io.to('srv:'+c.server_id).emit('channel:created',{channel:c});res.json({channel:c});}catch(e){console.error(e);res.status(500).json({error:'Could not create channel.'});}});
 app.get('/api/channels/:id/messages',auth,async(req,res)=>{try{const m=await query('SELECT c.server_id FROM channels c JOIN server_members sm ON sm.server_id=c.server_id WHERE c.id=$1 AND sm.user_id=$2',[req.params.id,req.user.sub]);if(!m.rowCount)return res.status(403).json({error:'No access to this channel.'});res.json(await messagePage('channel','m.channel_id=$1',[req.params.id],req.query.before));}catch(e){console.error(e);res.status(500).json({error:'Could not load messages.'});}});
-app.get('/api/servers/:id/members',auth,async(req,res)=>{try{const m=await query('SELECT 1 FROM server_members WHERE server_id=$1 AND user_id=$2',[req.params.id,req.user.sub]);if(!m.rowCount)return res.status(403).json({error:'Not a member.'});const r=await query('SELECT u.id,u.username,u.display_name,u.profile_rank FROM users u JOIN server_members sm ON sm.user_id=u.id WHERE sm.server_id=$1 ORDER BY u.display_name',[req.params.id]);res.json({members:r.rows.map(u=>({...u,status:statusOf(u.id)}))});}catch(e){console.error(e);res.status(500).json({error:'Could not load members.'});}});
+app.get('/api/servers/:id/members',auth,async(req,res)=>{try{const m=await query('SELECT 1 FROM server_members WHERE server_id=$1 AND user_id=$2',[req.params.id,req.user.sub]);if(!m.rowCount)return res.status(403).json({error:'Not a member.'});const r=await query('SELECT u.id,u.username,u.display_name,u.profile_rank,u.avatar_version FROM users u JOIN server_members sm ON sm.user_id=u.id WHERE sm.server_id=$1 ORDER BY u.display_name',[req.params.id]);res.json({members:r.rows.map(u=>({...u,status:statusOf(u.id)}))});}catch(e){console.error(e);res.status(500).json({error:'Could not load members.'});}});
 
 
 // PostgreSQL-backed uploads: 30 MiB for EVERY filename/extension, with safe MIME handling.
@@ -210,13 +371,13 @@ app.get('/api/search/messages',auth,async(req,res)=>{
     res.json({results:rows.rows});
   }catch(e){console.error(e);res.status(500).json({error:'Search failed.'});}
 });
-app.get('/api/users/search',auth,async(req,res)=>{try{const term=String(req.query.q||'').trim().toLowerCase().replace(/^@/,'');if(term.length<2)return res.json({users:[]});const r=await query("SELECT id,username,display_name,profile_rank FROM users WHERE username LIKE $1 AND id<>$2 ORDER BY username LIMIT 12",[term+'%',req.user.sub]);res.json({users:r.rows})}catch(e){res.status(500).json({error:'User search failed.'})}});
+app.get('/api/users/search',auth,async(req,res)=>{try{const term=String(req.query.q||'').trim().toLowerCase().replace(/^@/,'');if(term.length<2)return res.json({users:[]});const r=await query("SELECT id,username,display_name,profile_rank,avatar_version FROM users WHERE username LIKE $1 AND id<>$2 ORDER BY username LIMIT 12",[term+'%',req.user.sub]);res.json({users:r.rows})}catch(e){res.status(500).json({error:'User search failed.'})}});
 app.post('/api/friends/request',auth,async(req,res)=>{try{const target=String(req.body.username||'').trim().toLowerCase().replace(/^@/,'');const r=await query('SELECT id,username,display_name FROM users WHERE username=$1',[target]);if(!r.rowCount)return res.status(404).json({error:'Username not found.'});const other=r.rows[0];if(other.id===req.user.sub)return res.status(400).json({error:'You cannot add yourself.'});const existing=await query('SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2',[req.user.sub,other.id]);if(existing.rowCount)return res.status(409).json({error:'You are already friends.'});const reverse=await query("SELECT id FROM friend_requests WHERE sender_id=$1 AND receiver_id=$2 AND status='pending'",[other.id,req.user.sub]);if(reverse.rowCount){await query("UPDATE friend_requests SET status='accepted' WHERE id=$1",[reverse.rows[0].id]);await query('INSERT INTO friendships(user_id,friend_id) VALUES($1,$2),($2,$1) ON CONFLICT DO NOTHING',[req.user.sub,other.id]);return res.json({ok:true,accepted:true})}await query("INSERT INTO friend_requests(id,sender_id,receiver_id,status) VALUES($1,$2,$3,'pending') ON CONFLICT(sender_id,receiver_id) DO UPDATE SET status='pending'",[crypto.randomUUID(),req.user.sub,other.id]);res.json({ok:true})}catch(e){console.error(e);res.status(500).json({error:'Could not send friend request.'})}});
-app.get('/api/friends',auth,async(req,res)=>{try{const friends=await query('SELECT u.id,u.username,u.display_name,u.profile_rank FROM friendships f JOIN users u ON u.id=f.friend_id WHERE f.user_id=$1 ORDER BY u.username',[req.user.sub]);const incoming=await query("SELECT fr.id,u.username,u.display_name FROM friend_requests fr JOIN users u ON u.id=fr.sender_id WHERE fr.receiver_id=$1 AND fr.status='pending' ORDER BY fr.created_at DESC",[req.user.sub]);const outgoing=await query("SELECT u.username,u.display_name FROM friend_requests fr JOIN users u ON u.id=fr.receiver_id WHERE fr.sender_id=$1 AND fr.status='pending' ORDER BY fr.created_at DESC",[req.user.sub]);res.json({friends:friends.rows.map(u=>({...u,status:statusOf(u.id)})),incoming:incoming.rows,outgoing:outgoing.rows})}catch(e){res.status(500).json({error:'Could not load friends.'})}});
+app.get('/api/friends',auth,async(req,res)=>{try{const friends=await query('SELECT u.id,u.username,u.display_name,u.profile_rank,u.avatar_version FROM friendships f JOIN users u ON u.id=f.friend_id WHERE f.user_id=$1 ORDER BY u.username',[req.user.sub]);const incoming=await query("SELECT fr.id,u.username,u.display_name FROM friend_requests fr JOIN users u ON u.id=fr.sender_id WHERE fr.receiver_id=$1 AND fr.status='pending' ORDER BY fr.created_at DESC",[req.user.sub]);const outgoing=await query("SELECT u.username,u.display_name FROM friend_requests fr JOIN users u ON u.id=fr.receiver_id WHERE fr.sender_id=$1 AND fr.status='pending' ORDER BY fr.created_at DESC",[req.user.sub]);res.json({friends:friends.rows.map(u=>({...u,status:statusOf(u.id)})),incoming:incoming.rows,outgoing:outgoing.rows})}catch(e){res.status(500).json({error:'Could not load friends.'})}});
 app.post('/api/friends/:id/accept',auth,async(req,res)=>{try{const r=await query("UPDATE friend_requests SET status='accepted' WHERE id=$1 AND receiver_id=$2 AND status='pending' RETURNING sender_id",[req.params.id,req.user.sub]);if(!r.rowCount)return res.status(404).json({error:'Request not found.'});const other=r.rows[0].sender_id;await query('INSERT INTO friendships(user_id,friend_id) VALUES($1,$2),($2,$1) ON CONFLICT DO NOTHING',[req.user.sub,other]);res.json({ok:true})}catch(e){res.status(500).json({error:'Could not accept request.'})}});
 app.get('/api/dms/:id',auth,async(req,res)=>{try{if(!isUuid(req.params.id))return res.status(404).json({error:'User not found.'});const ok=await query(CAN_DM_SQL,[req.user.sub,req.params.id]);if(!ok.rowCount)return res.status(403).json({error:'You can only message friends or people in a server with you.'});res.json(await messagePage('dm','((m.sender_id=$1 AND m.recipient_id=$2) OR (m.sender_id=$2 AND m.recipient_id=$1))',[req.user.sub,req.params.id],req.query.before));}catch(e){console.error(e);res.status(500).json({error:'Could not load direct messages.'})}});
 // Your DM conversations, most recent first (for the sidebar list).
-app.get('/api/dms',auth,async(req,res)=>{try{const r=await query(`SELECT DISTINCT ON (d.other) d.other AS id,u.username,u.display_name,u.profile_rank,d.created_at AS last_message_at FROM (SELECT CASE WHEN sender_id=$1 THEN recipient_id ELSE sender_id END AS other,created_at FROM direct_messages WHERE sender_id=$1 OR recipient_id=$1) d JOIN users u ON u.id=d.other ORDER BY d.other,d.created_at DESC`,[req.user.sub]);res.json({conversations:r.rows.sort((a,b)=>b.last_message_at-a.last_message_at).slice(0,40).map(c=>({...c,status:statusOf(c.id)}))});}catch(e){console.error(e);res.status(500).json({error:'Could not load conversations.'})}});
+app.get('/api/dms',auth,async(req,res)=>{try{const r=await query(`SELECT DISTINCT ON (d.other) d.other AS id,u.username,u.display_name,u.profile_rank,u.avatar_version,d.created_at AS last_message_at FROM (SELECT CASE WHEN sender_id=$1 THEN recipient_id ELSE sender_id END AS other,created_at FROM direct_messages WHERE sender_id=$1 OR recipient_id=$1) d JOIN users u ON u.id=d.other ORDER BY d.other,d.created_at DESC`,[req.user.sub]);res.json({conversations:r.rows.sort((a,b)=>b.last_message_at-a.last_message_at).slice(0,40).map(c=>({...c,status:statusOf(c.id)}))});}catch(e){console.error(e);res.status(500).json({error:'Could not load conversations.'})}});
 // Server management: owners rename servers and edit/delete channels; anyone but the owner can leave.
 app.patch('/api/servers/:id',auth,async(req,res)=>{try{if(!isUuid(req.params.id)||!await isOwner(req.params.id,req.user.sub))return res.status(403).json({error:'Only the server owner can do that.'});const name=cleanName(req.body.name,'');if(!name)return res.status(400).json({error:'Enter a server name.'});await query('UPDATE servers SET name=$1 WHERE id=$2',[name,req.params.id]);io.to('srv:'+req.params.id).emit('server:updated',{id:req.params.id,name});res.json({ok:true,name});}catch(e){console.error(e);res.status(500).json({error:'Could not rename server.'})}});
 app.post('/api/servers/:id/leave',auth,async(req,res)=>{try{if(!isUuid(req.params.id))return res.status(404).json({error:'Server not found.'});if(await isOwner(req.params.id,req.user.sub))return res.status(400).json({error:"Owners can't leave their own server."});await query('DELETE FROM server_members WHERE server_id=$1 AND user_id=$2',[req.params.id,req.user.sub]);for(const s of io.sockets.sockets.values())if(s.user?.sub===req.user.sub)s.leave('srv:'+req.params.id);io.to('srv:'+req.params.id).emit('members:changed',{serverId:req.params.id});res.json({ok:true});}catch(e){console.error(e);res.status(500).json({error:'Could not leave server.'})}});
@@ -231,7 +392,7 @@ function statusOf(uid){const tabs=presence.get(uid);if(!tabs||!tabs.size)return 
 async function broadcastPresence(uid){try{const sv=await query('SELECT server_id FROM server_members WHERE user_id=$1',[uid]);const fr=await query('SELECT friend_id FROM friendships WHERE user_id=$1',[uid]);const rooms=[...sv.rows.map(r=>'srv:'+r.server_id),...fr.rows.map(r=>'user:'+r.friend_id),'user:'+uid];io.to(rooms).emit('presence:update',{userId:uid,status:statusOf(uid)});}catch(e){console.error(e);}}
 function setPresence(socket,status){const uid=socket.user.sub,before=statusOf(uid);if(status){if(!presence.has(uid))presence.set(uid,new Map());presence.get(uid).set(socket.id,status);}else{presence.get(uid)?.delete(socket.id);if(!presence.get(uid)?.size)presence.delete(uid);}if(statusOf(uid)!==before)broadcastPresence(uid);}
 function joinServerRoom(uid,serverId){for(const s of io.sockets.sockets.values())if(s.user?.sub===uid)s.join('srv:'+serverId);io.to('srv:'+serverId).emit('members:changed',{serverId});broadcastPresence(uid);}
-io.use((socket,next)=>{try{const t=socket.handshake.auth?.token;if(!t)throw Error('Missing token');socket.user=jwt.verify(t,JWT_SECRET);next();}catch{next(new Error('Unauthorized'));}});
+io.use(async(socket,next)=>{try{const t=socket.handshake.auth?.token;if(!t)throw Error('Missing token');const decoded=jwt.verify(t,JWT_SECRET);const result=await query('SELECT banned_at,display_name,username FROM users WHERE id=$1',[decoded.sub]);if(!result.rowCount||result.rows[0].banned_at)throw Error('Banned or deleted account');socket.user={...decoded,name:result.rows[0].display_name,username:result.rows[0].username};next();}catch{next(new Error('Unauthorized'));}});
 io.on('connection',socket=>{
  socket.join('user:'+socket.user.sub);
  query('SELECT server_id FROM server_members WHERE user_id=$1',[socket.user.sub]).then(r=>r.rows.forEach(x=>socket.join('srv:'+x.server_id))).catch(e=>console.error(e));

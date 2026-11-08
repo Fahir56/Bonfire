@@ -20,6 +20,16 @@ const EMOJIS = ['🔥', '😂', '🥹', '😭', '💀', '🤝', '👀', '✨', '
 const QUICK_REACTS = ['❤️', '😂', '🔥'];
 const RANK_META = Object.freeze({F:{label:'F • ASH',title:'Ash',tagline:'The quiet ember',icon:'◈'},D:{label:'D • EMBER',title:'Ember',tagline:'The fire begins',icon:'✦'},B:{label:'B • BLAZE',title:'Blaze',tagline:'The flame gets brighter',icon:'✹'},A:{label:'A • NOVA',title:'Nova',tagline:'A rare rising star',icon:'✧'},T:{label:'T • TITAN',title:'Titan',tagline:'Legend of the bonfire',icon:'✺'}});
 const knownRanks = new Map();
+const knownAvatars = new Map();
+function rememberAvatar(person, id = person?.id) { if(id && person && Number.isInteger(+person.avatar_version)) knownAvatars.set(id,Number(person.avatar_version)); }
+function avatarImage(id,version) {
+  if(!id || !/^[a-f0-9-]{36}$/i.test(id))return '';
+  const v=Number.isInteger(+version) ? +version : (knownAvatars.get(id)||0);
+  if(v<=0)return '';
+  return `<img class="avatar-photo" src="/api/users/${encodeURIComponent(id)}/avatar?v=${v}" alt="" loading="lazy" onerror="this.remove()">`;
+}
+function avatarInner(name,id,version) {return `<span class="avatar-initial">${safe(initials(name))}</span>${avatarImage(id,version)}`;}
+
 const validRank = rank => RANK_META[rank] ? rank : null;
 function rankFor(id) { return validRank(knownRanks.get(id) || (id===user?.id ? user.profile_rank : null) || members.find(m=>m.id===id)?.profile_rank || dmList.find(d=>d.id===id)?.profile_rank); }
 function badgeFor(rank) { rank=validRank(rank); return rank ? `<span class="rank-badge rank-${rank.toLowerCase()}" title="Manually awarded ${rank} rank">${RANK_META[rank].icon} ${RANK_META[rank].label}</span>` : ''; }
@@ -38,8 +48,8 @@ function initials(s) { return [...(s || '?').trim()][0]?.toUpperCase() || '?' }
 function safe(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])) }
 function time(s) { return new Date(s).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
 function colorFor(s) { let h = 0; for (const c of String(s || '?')) h = (h * 31 + c.codePointAt(0)) >>> 0; return palette[h % palette.length] }
-function avatar(name, cls = 'avatar', attrs = '', rank = null) { return `<div class="${cls}${rankCss(rank)}" ${attrs} style="background:${colorFor(name)}">${safe(initials(name))}</div>` }
-function avatarWithStatus(name, id) { const st = statusOf(id); return `<div class="avatar-wrap">${avatar(name,'avatar','',rankFor(id))}<i class="status-dot ${st}" data-presence="${safe(id)}" data-tip="${STATUS_TIP[st]}"></i></div>` }
+function avatar(name, cls = 'avatar', attrs = '', rank = null, id = null, version = undefined) { if(id && version!==undefined) rememberAvatar({avatar_version:version},id); return `<div class="${cls}${rankCss(rank)}" ${attrs} style="background:${colorFor(name)}">${avatarInner(name,id,version)}</div>` }
+function avatarWithStatus(name, id) { const st = statusOf(id); return `<div class="avatar-wrap">${avatar(name,'avatar','',rankFor(id),id)}<i class="status-dot ${st}" data-presence="${safe(id)}" data-tip="${STATUS_TIP[st]}"></i></div>` }
 function dayKey(d) { return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate() }
 function dayLabel(d) {
   const today = new Date(), y = new Date(); y.setDate(today.getDate() - 1);
@@ -231,11 +241,12 @@ async function boot() {
   try {
     user = (await api('/api/me')).user;
     if (user.profile_rank) knownRanks.set(user.id,validRank(user.profile_rank));
+    rememberAvatar(user);
     $('adminOpen').classList.toggle('hidden', !user.is_admin);
     $('myAvatar').className='avatar me-avatar'+rankCss(user.profile_rank);
     renderMyRank();
     $('auth').classList.add('hidden'); $('app').classList.remove('hidden');
-    $('myName').textContent = user.display_name; $('myAvatar').textContent = initials(user.display_name); $('myAvatar').style.background = colorFor(user.display_name);
+    $('myName').textContent = user.display_name; renderMyAvatar();
     lastRead = load('bonfireRead:' + user.id, {}); drafts = load('bonfireDrafts:' + user.id, {});
     api('/api/config').then(d => { limits = { ...limits, ...d.limits }; renderLimitHint() }).catch(() => { }); renderLimitHint();
     socket = io({ auth: cb => cb({ token, status: currentStatus() }) });
@@ -264,6 +275,10 @@ async function boot() {
     socket.on('presence:update', ({ userId, status }) => setPresence(userId, status));
     socket.on('app:error', toast);
     socket.on('user:rank-updated', onRankUpdated);
+    socket.on('user:profile-updated', onProfileUpdated);
+    socket.on('account:banned', () => { toast('Your account has been banned.'); logoutAfterModeration(); });
+    socket.on('membership:revoked', ({serverId}) => { if(activeServer?.id===serverId){toast('You were removed from that server.');loadServers()} });
+    socket.on('channel:purged', ({channelId}) => { if(view?.kind==='channel' && view.id===channelId){view.msgs=[];renderMessagesAll();toast('Channel history was cleared by an administrator.')} });
     socket.on('voice:peer-joined', peerJoined); socket.on('voice:peer-left', peerLeft); socket.on('voice:signal', handleSignal);
     if (matchMedia('(max-width:1000px)').matches) $('app').classList.add('no-members');
     await loadDMs();
@@ -372,7 +387,7 @@ async function loadServers() {
   const d = await api('/api/servers'); servers = d.servers;
   for (const c of d.channels || []) { allChannels.set(c.id, c); if (c.last_message_at) noteActivity('c:' + c.id, c.last_message_at, true) }
   save('bonfireRead:' + user.id, lastRead);
-  if (!servers.length) { const n = await api('/api/servers', { method: 'POST', body: JSON.stringify({ name: 'Bonfire' }) }); servers = [n.server]; allChannels.set(n.channel.id, n.channel) }
+  if(!servers.length){ activeServer=null;activeChannel=null;activeDM=null;channels=[];view=null;renderServers();renderChannels();$('serverName').textContent='No servers';$('channelName').textContent='Find your people';$('channelTopic').textContent='Join a server using the ↗ button or create one with ＋.';$('messages').innerHTML='<div class="welcome"><h2>There are no servers here yet.</h2><p>Join with an invite or start your own server.</p></div>';return; }
   renderServers();
   // Pick up where you left off
   const last = load('bonfireLast:' + user.id, null);
@@ -475,15 +490,16 @@ function buildArticle(m, prev, animate = false) {
   const who = `data-user="${safe(m.user_id)}" data-name="${safe(n)}"`;
   const reply = !m.reply ? '' : m.reply.deleted
     ? `<div class="reply-ref deleted"><span class="reply-curve"></span><span class="reply-snippet">Original message was deleted</span></div>`
-    : `<div class="reply-ref" data-jump="${safe(m.reply.id)}"><span class="reply-curve"></span>${avatar(m.reply.display_name, 'avatar mini')}<b>${safe(m.reply.display_name)}</b><span class="reply-snippet">${safe(stripMd(m.reply.content)) || (m.reply.attachment ? '🖼️ Attachment' : '')}</span></div>`;
+    : `<div class="reply-ref" data-jump="${safe(m.reply.id)}"><span class="reply-curve"></span>${avatar(m.reply.display_name, 'avatar mini','',rankFor(m.reply.user_id),m.reply.user_id)}<b>${safe(m.reply.display_name)}</b><span class="reply-snippet">${safe(stripMd(m.reply.content)) || (m.reply.attachment ? '🖼️ Attachment' : '')}</span></div>`;
   const body = editing
     ? `<div class="edit-box"><textarea maxlength="4000" rows="1">${safe(m.content)}</textarea><small>Esc to <a data-act="cancel-edit">cancel</a> · Enter to <a data-act="save-edit">save</a></small></div>`
-    : (m.content ? `<div class="message-text${jumbo ? ' jumbo' : ''}">${format(m.content)}${m.edited_at ? `<span class="edited" title="Edited ${safe(new Date(m.edited_at).toLocaleString())}">(edited)</span>` : ''}</div>` : '');
+    : (m.content ? `<div class="message-text${jumbo ? ' jumbo' : ''}">${format(m.content)}${m.edited_at ? `<span class="edited" title="Edited ${safe(new Date(m.edited_at).toLocaleString())}">${m.edited_by_admin?'(edited by admin)':'(edited)'}</span>` : ''}</div>` : '');
   const canDelete = mine || (view?.kind === 'channel' && activeServer?.owner_id === user.id);
+  const adminCanModerate = user?.is_admin && view?.kind==='channel' && !mine;
   el.innerHTML = reply +
-    (compact ? `<time class="stamp" title="${safe(at.toLocaleString())}">${time(m.created_at)}</time>` : avatar(n, 'avatar author', who, m.profile_rank || rankFor(m.user_id))) +
+    (compact ? `<time class="stamp" title="${safe(at.toLocaleString())}">${time(m.created_at)}</time>` : avatar(n, 'avatar author', who, m.profile_rank || rankFor(m.user_id),m.user_id,m.avatar_version)) +
     `<div class="message-body">${compact ? '' : `<div class="message-meta"><b class="author${rankCss(m.profile_rank || rankFor(m.user_id))}" ${who}>${safe(n)}</b>${badgeFor(m.profile_rank || rankFor(m.user_id))}<time title="${safe(at.toLocaleString())}">${time(m.created_at)}</time></div>`}${body}${media}${reactionsHTML(m)}</div>` +
-    `<div class="msg-actions">${QUICK_REACTS.map(e => `<button data-act="quick" data-emoji="${e}" data-tip="React ${e}">${e}</button>`).join('')}<button data-act="react" data-tip="More reactions">😀</button><button data-act="reply" data-tip="Reply">↩️</button>${mine ? '<button data-act="edit" data-tip="Edit">✏️</button>' : ''}${m.content ? '<button data-act="copy" data-tip="Copy text">📋</button>' : ''}${canDelete ? '<button data-act="delete" class="danger" data-tip="Delete (Shift+click skips the check)">🗑️</button>' : ''}</div>`;
+    `<div class="msg-actions">${QUICK_REACTS.map(e => `<button data-act="quick" data-emoji="${e}" data-tip="React ${e}">${e}</button>`).join('')}<button data-act="react" data-tip="More reactions">😀</button><button data-act="reply" data-tip="Reply">↩️</button>${mine ? '<button data-act="edit" data-tip="Edit">✏️</button>' : ''}${m.content ? '<button data-act="copy" data-tip="Copy text">📋</button>' : ''}${canDelete ? '<button data-act="delete" class="danger" data-tip="Delete (Shift+click skips the check)">🗑️</button>' : ''}${adminCanModerate ? '<button data-act="admin-edit" data-tip="Admin: edit message (audited)">🛡️✏️</button><button data-act="admin-delete" class="danger" data-tip="Admin: delete message (audited)">🛡️🗑️</button>' : ''}</div>`;
   el.querySelectorAll('img.message-media,video.message-media,audio.inline-audio').forEach(x => {
     x.addEventListener(x.tagName === 'IMG' ? 'load' : 'loadedmetadata', () => { if (stickToBottom) scrollBottom() }, { once: true });
     // If it fails to load, ask the server whether it expired (410) — a video the browser just can't play stays as-is
@@ -654,6 +670,8 @@ function messageAction(act, id, btn, e) {
   else if (act === 'react') openReactPicker(id, btn);
   else if (act === 'reply') startReply(m);
   else if (act === 'edit') startEdit(id);
+  else if (act === 'admin-edit') startEdit(id,true);
+  else if (act === 'admin-delete') adminDeleteMessage(m);
   else if (act === 'copy') navigator.clipboard?.writeText(m.content).then(() => toast('Copied 📋'), () => toast("Couldn't copy"));
   else if (act === 'delete') deleteMessage(m, e.shiftKey);
   else if (act === 'cancel-edit') cancelEdit();
@@ -678,22 +696,36 @@ function renderReplyBar() {
   $('replyBar').innerHTML = replyTo ? `<span>↩️ Replying to <b>${safe(replyTo.name)}</b></span><span class="reply-snippet">${safe(stripMd(replyTo.content)) || (replyTo.attachment ? '🖼️ Attachment' : '')}</span><button type="button" class="icon-btn" id="cancelReply" aria-label="Cancel reply" data-tip="Cancel (Esc)">✕</button>` : '';
   if (replyTo) $('cancelReply').onclick = cancelReply;
 }
-function startEdit(id) {
-  const m = view?.msgs.find(x => x.id === id); if (!m || m.user_id !== user.id) return;
+let editingAsAdmin=false;
+function startEdit(id,admin=false) {
+  const m = view?.msgs.find(x => x.id === id); if (!m || (m.user_id !== user.id && !(admin && user?.is_admin && view?.kind==='channel'))) return;
+  editingAsAdmin=!!admin;
   if (editingId && editingId !== id) { const prev = editingId; editingId = null; rerenderMessage(prev) }
   editingId = id; rerenderMessage(id);
   const ta = findMsgEl(id)?.querySelector('.edit-box textarea'); if (!ta) return;
   autosizeEl(ta, 300); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); ta.scrollIntoView({ block: 'nearest' });
 }
-function saveEdit(id, value) {
+async function saveEdit(id, value) {
   const m = view?.msgs.find(x => x.id === id); if (!m) return;
   const v = value.trim();
   if (v === (m.content || '').trim()) return cancelEdit();
+  if(editingAsAdmin){
+    if(!v){toast('Admin edits cannot leave an empty message. Use delete instead.');return}
+    try{await api('/api/admin/messages/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({content:v})});
+      editingAsAdmin=false;editingId=null;rerenderMessage(id);toast('Admin edit applied and recorded');input.focus();
+    }catch(e){toast(e.message)}
+    return;
+  }
   if (!v && !m.attachment_id) { cancelEdit(); return deleteMessage(m) }
   socket.emit('message:edit', { id, content: v });
   m.content = v; m.edited_at = new Date().toISOString(); editingId = null; rerenderMessage(id); input.focus();
 }
-function cancelEdit() { const id = editingId; editingId = null; if (id) rerenderMessage(id); input.focus() }
+function cancelEdit() { const id = editingId; editingId = null; editingAsAdmin=false; if (id) rerenderMessage(id); input.focus() }
+async function adminDeleteMessage(m){
+  if(!user?.is_admin || view?.kind!=='channel')return;
+  const ok=await ask({title:'Delete this message as admin?',hint:`This action is permanent and audited. ${clip(stripMd(m.content||'Attached file'),110)}`,emoji:'🛡️',ok:'Delete message',input:false,danger:true});
+  if(!ok)return;try{await api('/api/admin/messages/'+encodeURIComponent(m.id),{method:'DELETE'});toast('Message deleted by admin')}catch(e){toast(e.message)}
+}
 $('messages').addEventListener('keydown', e => {
   const ta = e.target.closest('.edit-box textarea'); if (!ta) return;
   if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelEdit() }
@@ -765,7 +797,7 @@ function updateMentionPop() {
 }
 function renderMentionPop() {
   $('mentionPop').classList.remove('hidden');
-  $('mentionPop').innerHTML = '<div class="label">MENTION SOMEONE</div>' + mention.items.map((m, i) => `<button type="button" class="mention-item${i === mention.index ? ' on' : ''}" data-i="${i}">${avatar(m.display_name)}<b>${safe(m.display_name)}</b><small>@${safe(m.username)}</small></button>`).join('');
+  $('mentionPop').innerHTML = '<div class="label">MENTION SOMEONE</div>' + mention.items.map((m, i) => `<button type="button" class="mention-item${i === mention.index ? ' on' : ''}" data-i="${i}">${avatar(m.display_name,'avatar','',m.profile_rank,m.id,m.avatar_version)}<b>${safe(m.display_name)}</b><small>@${safe(m.username)}</small></button>`).join('');
 }
 function pickMention(i) {
   const m = mention.items[i], tag = '@' + m.username + ' ';
@@ -979,7 +1011,7 @@ async function loadMembers(animate = true) {
   try {
     const serverId = activeServer.id, d = await api(`/api/servers/${serverId}/members`);
     if (serverId !== activeServer?.id) return;
-    members = d.members; d.members.forEach(m => { knownRanks.set(m.id, validRank(m.profile_rank)); if (m.id !== user.id) presence.set(m.id, m.status) });
+    members = d.members; d.members.forEach(m => { knownRanks.set(m.id, validRank(m.profile_rank)); rememberAvatar(m); if (m.id !== user.id) presence.set(m.id, m.status) });
     renderMembers(animate);
   } catch { }
 }
@@ -1020,7 +1052,7 @@ document.addEventListener('click', e => {
 });
 async function loadDMs() {
   try {
-    const d = await api('/api/dms'); dmList = d.conversations; d.conversations.forEach(c=>knownRanks.set(c.id,validRank(c.profile_rank)));
+    const d = await api('/api/dms'); dmList = d.conversations; d.conversations.forEach(c=>{knownRanks.set(c.id,validRank(c.profile_rank));rememberAvatar(c)});
     for (const c of dmList) { presence.set(c.id, c.status); noteActivity('d:' + c.id, c.last_message_at, true) }
     save('bonfireRead:' + user.id, lastRead); renderDMList();
   } catch { }
@@ -1082,15 +1114,15 @@ $('friendForm').onsubmit = async e => {
 async function loadFriends() {
   try {
     const d = await api('/api/friends');
-    d.friends.forEach(f => presence.set(f.id, f.status));
+    d.friends.forEach(f => {presence.set(f.id, f.status);rememberAvatar(f)});
     $('friendBadge').textContent = d.incoming.length; $('friendBadge').classList.toggle('hidden', !d.incoming.length);
     $('friendRequests').innerHTML = d.incoming.length
-      ? d.incoming.map((f, i) => `<div class="friend-row" style="animation-delay:${i * 40}ms">${avatar(f.display_name)}<span>@${safe(f.username)}</span><button class="primary" data-accept="${f.id}">Accept</button></div>`).join('')
+      ? d.incoming.map((f, i) => `<div class="friend-row" style="animation-delay:${i * 40}ms">${avatar(f.display_name,'avatar','',f.profile_rank,f.id,f.avatar_version)}<span>@${safe(f.username)}</span><button class="primary" data-accept="${f.id}">Accept</button></div>`).join('')
       : '<p class="muted">No pending requests.</p>';
     $('friendList').innerHTML = (d.friends.length
       ? d.friends.map((f, i) => `<div class="friend-row" style="animation-delay:${i * 40}ms">${avatarWithStatus(f.display_name, f.id)}<span>@${safe(f.username)}</span><button data-dm="${f.id}" data-name="${safe(f.display_name)}" data-username="${safe(f.username)}">💬 Message</button></div>`).join('')
       : '<p class="muted">Add a friend by username to start a DM.</p>')
-      + (d.outgoing.length ? `<p class="modal-label">WAITING ON</p>` + d.outgoing.map(f => `<div class="friend-row">${avatar(f.display_name)}<span>@${safe(f.username)}</span><small class="muted">pending…</small></div>`).join('') : '');
+      + (d.outgoing.length ? `<p class="modal-label">WAITING ON</p>` + d.outgoing.map(f => `<div class="friend-row">${avatar(f.display_name,'avatar','',f.profile_rank,f.id,f.avatar_version)}<span>@${safe(f.username)}</span><small class="muted">pending…</small></div>`).join('') : '');
     document.querySelectorAll('[data-accept]').forEach(b => b.onclick = async () => {
       try { await api('/api/friends/' + b.dataset.accept + '/accept', { method: 'POST' }); await loadFriends(); toast('Friend request accepted 🤝') } catch (e) { toast(e.message) }
     });
@@ -1282,7 +1314,7 @@ async function joinVoice() {
   } catch (e) { localStream = null; toast('Microphone unavailable: ' + e.message) }
 }
 function renderVoiceMembers() {
-  $('voiceMembers').innerHTML = localStream ? `<div class="voice-person">${avatar(user.display_name)}${safe(user.display_name)} <span class="muted">(you)</span></div>${voicePeers.size ? `<div class="voice-person muted">+ ${voicePeers.size} other${voicePeers.size > 1 ? 's' : ''} by the fire</div>` : ''}` : '';
+  $('voiceMembers').innerHTML = localStream ? `<div class="voice-person">${avatar(user.display_name,'avatar','',rankFor(user.id),user.id,user.avatar_version)}${safe(user.display_name)} <span class="muted">(you)</span></div>${voicePeers.size ? `<div class="voice-person muted">+ ${voicePeers.size} other${voicePeers.size > 1 ? 's' : ''} by the fire</div>` : ''}` : '';
   $('voiceCount').textContent = localStream ? 1 + voicePeers.size : 0;
 }
 async function peerJoined(p) {
@@ -1331,8 +1363,27 @@ function renderMyRank() {
   if(!user)return;
   const r=rankFor(user.id);
   $('myRank').innerHTML=badgeFor(r);
-  $('myAvatar').className='avatar me-avatar'+rankCss(r);
+  renderMyAvatar();
 }
+function renderMyAvatar(){
+  if(!user)return;
+  const el=$('myAvatar');el.className='avatar me-avatar'+rankCss(user.profile_rank);
+  el.style.background=colorFor(user.display_name);el.innerHTML=avatarInner(user.display_name,user.id,user.avatar_version);
+}
+function logoutAfterModeration(){try{localStorage.removeItem('bonfireToken')}catch{} if(socket)socket.disconnect();location.reload();}
+function onProfileUpdated({userId,display_name,username,avatar_version}={}){
+  if(!userId)return;
+  if(avatar_version!==undefined)rememberAvatar({avatar_version},userId);
+  const patch=o=>{if(!o)return; if(display_name!==undefined)o.display_name=display_name; if(username!==undefined)o.username=username; if(avatar_version!==undefined)o.avatar_version=avatar_version;};
+  members.filter(m=>m.id===userId).forEach(patch);dmList.filter(m=>m.id===userId).forEach(patch);
+  if(view) view.msgs.filter(m=>m.user_id===userId).forEach(patch);
+  if(activeDM?.id===userId)patch(activeDM);
+  if(user?.id===userId){patch(user);$('myName').textContent=user.display_name;renderMyAvatar();}
+  if(members.length)renderMembers();renderDMList();if(view)rerenderKeepScroll();
+  if(profileOpenId===userId)openProfile(userId);
+  if(user?.is_admin&&!$('adminModal').classList.contains('hidden'))loadAdmin();
+}
+
 function onRankUpdated({userId,rank}={}) {
   if(!userId)return;
   rank=validRank(rank);
@@ -1355,6 +1406,7 @@ async function openProfile(id) {
   $('profileContents').innerHTML='<p class="muted">Fetching profile…</p>';
   $('profileMessage').classList.add('hidden');
   $('profileManage').classList.add('hidden');
+  $('profileCustomize').classList.add('hidden');
   try {
     const d=await api('/api/users/'+encodeURIComponent(id)+'/profile');
     if(profileOpenId!==id)return;
@@ -1363,7 +1415,7 @@ async function openProfile(id) {
     const date=new Date(p.created_at);
     $('profileContents').innerHTML=`<div class="profile-hero${rankCss(rank)}">
       <div class="profile-light"></div><span class="profile-crest">${rank?meta.icon:'✦'}</span>
-      ${avatar(p.display_name,'avatar profile-avatar','',rank)}
+      ${avatar(p.display_name,'avatar profile-avatar','',rank,p.id,p.avatar_version)}
       <h3>${safe(p.display_name)}</h3><p class="profile-handle">@${safe(p.username)}</p>
       ${rank?badgeFor(rank):'<span class="profile-unranked">Unranked • a fresh spark</span>'}
       <p class="profile-subtitle">${meta?meta.tagline:'Every legend starts somewhere.'}</p>
@@ -1371,25 +1423,66 @@ async function openProfile(id) {
       ${id===user.id ? '<button id="copyProfileId" class="profile-copy-id" type="button">Copy my account ID</button>' : ''}
       ${id===user.id && secretUnlocked() ? '<span class="secret-achievement">✺ Sparkkeeper • Hidden Flame unlocked</span>' : ''}
     </div>`;
+    rememberAvatar(p);
     if(id===user.id) $('copyProfileId').onclick=()=>navigator.clipboard.writeText(p.id).then(()=>toast('Account ID copied')).catch(()=>toast('Your account ID: '+p.id));
+    renderProfileCustomization(p);
     $('profileMessage').classList.toggle('hidden',id===user.id);
     $('profileMessage').onclick=()=>{closeProfile();openDM({id:p.id,display_name:p.display_name,username:p.username})};
-    $('profileManage').classList.toggle('hidden',!user.is_admin);
+    $('profileManage').classList.toggle('hidden',!user.is_admin || id===user.id);
     $('profileManage').onclick=()=>{closeProfile();openAdmin('@'+p.username)};
   }catch(e){if(profileOpenId===id)$('profileContents').innerHTML=`<p class="error">${safe(e.message)}</p>`;}
 }
+const PHOTO_LIMIT=2*1024*1024;
+async function uploadProfilePhoto(url,file){
+  if(!file)return;
+  if(file.size>PHOTO_LIMIT){toast('Profile photo must be under 2 MB.');throw Error('Photo is too large.');}
+  if(!/^image\/(png|jpeg|webp|gif)$/.test(file.type)){toast('Choose a PNG, JPG, WebP or GIF picture.');throw Error('Invalid photo type.');}
+  const fd=new FormData();fd.append('avatar',file);
+  const response=await fetch(url,{method:'POST',headers:{Authorization:'Bearer '+token},body:fd});
+  let d={};try{d=await response.json()}catch{}
+  if(!response.ok)throw Error(d.error||'Profile photo upload failed.');return d;
+}
+function renderProfileCustomization(p){
+  const section=$('profileCustomize');
+  section.classList.toggle('hidden',p.id!==user.id);
+  if(p.id!==user.id){section.innerHTML='';return;}
+  section.innerHTML=`<h3>✨ Customize your profile</h3>
+    <div class="profile-edit-row"><label>Display name<input id="profileDisplayName" maxlength="32" value="${safe(p.display_name)}" autocomplete="off"></label><button class="btn primary" type="button" id="profileSaveName">Save name</button></div>
+    <div class="profile-edit-row"><label>Username / @handle<input id="profileUsername" maxlength="24" value="${safe(p.username)}" autocomplete="off" spellcheck="false" ${user.is_admin?'disabled':''}></label><button class="btn secondary" type="button" id="profileSaveUsername" ${user.is_admin?'disabled':''}>Save @</button></div>
+    <div class="profile-edit-actions"><button class="btn secondary" type="button" id="profileChangePhoto">📷 Change picture</button><button class="btn secondary" type="button" id="profileRemovePhoto">Remove picture</button></div>
+    <p class="profile-edit-note">Pictures: PNG, JPG, GIF, or WebP, maximum 2 MB. Your rank is always assigned by Shift.${user.is_admin?' Shift’s @handle is locked for admin security.':''}</p>`;
+  $('profileSaveName').onclick=async()=>{
+    const name=$('profileDisplayName').value.trim();
+    try{const d=await api('/api/me/profile',{method:'PATCH',body:JSON.stringify({display_name:name})});onProfileUpdated({userId:user.id,...d.user});toast('Display name updated ✨');}
+    catch(e){toast(e.message)}
+  };
+  $('profileSaveUsername').onclick=async()=>{
+    const username=$('profileUsername').value.trim().toLowerCase();
+    try{const d=await api('/api/me/username',{method:'PATCH',body:JSON.stringify({username})});onProfileUpdated({userId:user.id,...d.user});toast('Username updated. Use @'+username+' to mention you.');}
+    catch(e){toast(e.message)}
+  };
+  $('profileChangePhoto').onclick=()=>{$('profileAvatarInput').value='';$('profileAvatarInput').click()};
+  $('profileRemovePhoto').onclick=async()=>{
+    const confirmed=await ask({title:'Remove profile picture?',hint:'Your avatar will go back to the first letter of your display name.',emoji:'🖼️',ok:'Remove',input:false});if(!confirmed)return;
+    try{const d=await api('/api/me/avatar',{method:'DELETE'});onProfileUpdated({userId:user.id,avatar_version:d.avatar_version});toast('Photo removed');}catch(e){toast(e.message)}
+  };
+}
+$('profileAvatarInput').addEventListener('change',async(e)=>{
+  const file=e.target.files?.[0];if(!file)return;
+  try{const d=await uploadProfilePhoto('/api/me/avatar',file);onProfileUpdated({userId:user.id,avatar_version:d.avatar_version});toast('Profile picture updated 📷');}catch(e){toast(e.message)}finally{e.target.value=''}
+});
 function closeProfile(){profileOpenId=null;$('profileModal').classList.add('hidden')}
 $('profileClose').onclick=closeProfile;
 $('profileModal').onclick=e=>{if(e.target===$('profileModal'))closeProfile()};
 $('myName').addEventListener('click',()=>{if(user)openProfile(user.id)});
-$('myAvatar').addEventListener('dblclick',()=>{if(user)openProfile(user.id)});
+$('myAvatar').addEventListener('click',()=>{if(user)openProfile(user.id)});
 
 let adminOffset=0, adminResults=[], adminLastSearch='', adminTicket=0, adminDelay;
 function openAdmin(q='') {
   if(!user?.is_admin)return;
   $('adminModal').classList.remove('hidden');
   $('adminSearch').value=q.replace(/^@/,'');
-  adminOffset=0;loadAdmin();
+  adminOffset=0;loadAdmin();loadAdminServers();
   $('adminSearch').focus();
 }
 function closeAdmin(){adminTicket++;$('adminModal').classList.add('hidden')}
@@ -1409,21 +1502,141 @@ async function loadAdmin(){
     if(ticket!==adminTicket)return;
     adminResults=d.users;
     adminLastSearch=q;
-    d.users.forEach(x=>knownRanks.set(x.id,validRank(x.profile_rank)));
+    d.users.forEach(x=>{knownRanks.set(x.id,validRank(x.profile_rank));rememberAvatar(x)});
     const counts=Object.fromEntries(d.counts.map(x=>[x.rank,x.amount]));
     $('adminStats').innerHTML=`<div><strong>${Object.values(counts).reduce((a,b)=>a+b,0)}</strong><small>Total people</small></div><div><strong>${Object.entries(counts).filter(([k])=>k!=='NONE').reduce((sum,[,v])=>sum+v,0)}</strong><small>Ranked</small></div><div><strong>${counts.T||0}</strong><small>Legends (T)</small></div>`;
     $('adminUsers').innerHTML=d.users.length?d.users.map(x=>`<div class="admin-user${rankCss(x.profile_rank)}" data-admin-id="${safe(x.id)}">
-      ${avatar(x.display_name,'avatar','',x.profile_rank)}
+      ${avatar(x.display_name,'avatar','',x.profile_rank,x.id,x.avatar_version)}
       <div class="admin-user-details"><strong>${safe(x.display_name)}</strong><small>@${safe(x.username)}</small>${badgeFor(x.profile_rank)}</div>
       <label class="admin-select-label"><span>MANUAL RANK</span><select data-admin-rank="${safe(x.id)}" aria-label="Assign rank to ${safe(x.username)}">
         ${[['','None'],['F','F • Ash'],['D','D • Ember'],['B','B • Blaze'],['A','A • Nova'],['T','T • Titan']].map(([v,label])=>`<option value="${v}" ${v===(x.profile_rank||'')?'selected':''}>${label}</option>`).join('')}
-      </select></label></div>`).join(''):'<p class="admin-loading">No matching people. Try another name.</p>';
+      </select></label>
+      <div class="admin-user-actions">
+        ${x.id===user.id?'<span class="banned">Your account — protected from moderation</span>':`
+          <button type="button" data-admin-action="name" data-uid="${safe(x.id)}">✏️ Name</button>
+          <button type="button" data-admin-action="handle" data-uid="${safe(x.id)}">@ Username</button>
+          <button type="button" data-admin-action="avatar" data-uid="${safe(x.id)}">📷 Photo</button>
+          <button type="button" data-admin-action="clear-avatar" data-uid="${safe(x.id)}">Remove photo</button>
+          <button type="button" data-admin-action="kick" data-uid="${safe(x.id)}">👢 Kick</button>
+          <button type="button" data-admin-action="ban" data-uid="${safe(x.id)}" class="${x.banned_at?'':'danger'}">${x.banned_at?'🔓 Unban':'🚫 Ban'}</button>
+          ${x.banned_at?'<span class="banned">BANNED</span>':''}`}
+      </div></div>`).join(''):'<p class="admin-loading">No matching people. Try another name.</p>';
     $('adminPaging').textContent=d.total?`Showing ${adminOffset+1}–${Math.min(d.total,adminOffset+d.users.length)} of ${d.total}`:'0 people';
     $('adminPrev').disabled=adminOffset===0;
     $('adminNext').disabled=adminOffset+d.users.length>=d.total;
     $('adminHistory').innerHTML=d.history.length?d.history.map(h=>`<div class="rank-log"><b>@${safe(h.target_username)}</b><span>${h.old_rank||'None'} → ${h.new_rank||'None'}</span><time>${new Date(h.created_at).toLocaleString()}</time></div>`).join(''):'<p class="muted">No ranks changed yet.</p>';
+    renderModerationHistory(d.moderationHistory||[]);
   }catch(e){if(ticket!==adminTicket)return;$('adminError').textContent=e.message;$('adminUsers').innerHTML='';}
 }
+let adminServerCatalog=[],adminChannelCatalog=[],adminAvatarUser=null;
+function renderModerationHistory(events){
+  $('adminModerationHistory').innerHTML=events.length?events.map(ev=>{
+    const details=ev.details||{};
+    const descriptions={channel_purge:'Purged channel',user_ban:'Banned user',user_unban:'Unbanned user',server_kick:'Kicked user',profile_edit:'Updated profile',profile_name_edit:'Changed display name',profile_avatar_replace:'Changed avatar',profile_avatar_remove:'Removed avatar',evidence_export:'Exported evidence ZIP',message_edit:'Edited message',message_delete:'Deleted message'};
+    return `<div class="mod-log"><span><b>${safe(descriptions[ev.action]||ev.action)}</b> ${ev.target_username?'@'+safe(ev.target_username):''}${ev.action==='channel_purge'?' ('+Number(details.count||0)+' messages)':''}</span><time>${safe(new Date(ev.created_at).toLocaleString())}</time></div>`;
+  }).join(''):'<p class="muted">No moderation actions yet.</p>';
+}
+async function loadAdminServers(){
+  if(!user?.is_admin)return;
+  const prev=$('adminServerSelect').value;
+  try{const d=await api('/api/admin/servers');
+    adminServerCatalog=d.servers||[];adminChannelCatalog=d.channels||[];
+    $('adminServerSelect').innerHTML=adminServerCatalog.map(s=>`<option value="${safe(s.id)}">${safe(s.name)}</option>`).join('');
+    if(adminServerCatalog.some(s=>s.id===prev))$('adminServerSelect').value=prev;
+    else if(activeServer && adminServerCatalog.some(s=>s.id===activeServer.id))$('adminServerSelect').value=activeServer.id;
+    renderAdminChannels();
+  }catch(e){$('adminError').textContent=e.message}
+}
+function renderAdminChannels(){
+  const serverId=$('adminServerSelect').value,old=$('adminChannelSelect').value;
+  const list=adminChannelCatalog.filter(c=>c.server_id===serverId);
+  $('adminChannelSelect').innerHTML=list.map(c=>`<option value="${safe(c.id)}">#${safe(c.name)}</option>`).join('');
+  if(list.some(c=>c.id===old))$('adminChannelSelect').value=old;
+  else if(activeChannel && list.some(c=>c.id===activeChannel.id))$('adminChannelSelect').value=activeChannel.id;
+  $('adminPurge').disabled=!list.length;
+  $('adminBackupChannel').disabled=!list.length;
+  $('adminBackupServer').disabled=!serverId;
+}
+$('adminServerSelect').addEventListener('change',renderAdminChannels);
+async function downloadEvidence(scope) {
+  if(!user?.is_admin)return;
+  const id=scope==='channel' ? $('adminChannelSelect').value : $('adminServerSelect').value;
+  const selected=scope==='channel'?adminChannelCatalog.find(x=>x.id===id):adminServerCatalog.find(x=>x.id===id);
+  if(!selected)return toast('Choose a '+scope+' to back up.');
+  const button=$('adminBackup'+(scope==='channel'?'Channel':'Server'));
+  button.disabled=true;const status=$('adminBackupStatus');
+  status.textContent='Preparing secure evidence download for '+selected.name+'…';
+  try{
+    const d=await api('/api/admin/exports',{method:'POST',body:JSON.stringify({type:scope,id})});
+    // A one-time download URL streams the ZIP directly to disk; JWTs never enter the URL.
+    if(window.BonfireAndroid?.saveEvidence){
+      // Android DownloadManager must consume the one-time ticket directly.
+      window.BonfireAndroid.saveEvidence(new URL(d.download_url,location.origin).href);
+    }else{
+      const link=document.createElement('a');link.href=d.download_url;link.download='';document.body.appendChild(link);link.click();link.remove();
+    }
+    status.textContent='Download started for '+selected.name+' ('+d.estimated_messages+' messages). Check your browser Downloads folder. The secure link expires in 90 seconds.';
+    toast('Evidence ZIP download started 🗃️');
+    if(typeof loadAdmin==='function')loadAdmin();
+  }catch(e){status.textContent='Backup could not start: '+e.message;toast(e.message)}
+  finally{button.disabled=false;}
+}
+$('adminBackupChannel').onclick=()=>downloadEvidence('channel');
+$('adminBackupServer').onclick=()=>downloadEvidence('server');
+$('adminPurge').onclick=async()=>{
+  if(!user?.is_admin)return;
+  const cid=$('adminChannelSelect').value;
+  const channel=adminChannelCatalog.find(c=>c.id===cid);if(!channel)return;
+  const confirmText=await ask({title:'Permanently purge #'+channel.name+'?',hint:'All messages and their attachments in this channel will be deleted. This cannot be undone. Use Evidence Backup above FIRST if you need a record. Type the full channel name to confirm.',emoji:'🧹',placeholder:channel.name,ok:'Delete history',danger:true});
+  if(confirmText!==channel.name){if(confirmText!==null)toast('Channel name did not match. Nothing deleted.');return;}
+  try{const d=await api('/api/admin/channels/'+encodeURIComponent(cid)+'/purge',{method:'POST',body:'{}'});toast('Purged '+d.count+' messages from #'+channel.name);loadAdmin();}catch(e){toast(e.message)}
+};
+$('adminUsers').addEventListener('click',async e=>{
+  const b=e.target.closest('[data-admin-action]');if(!b || !user?.is_admin)return;
+  const id=b.dataset.uid,act=b.dataset.adminAction,person=adminResults.find(x=>x.id===id);
+  if(!person||id===user.id)return;
+  const endpoint='/api/admin/users/'+encodeURIComponent(id);
+  b.disabled=true;
+  try{
+    if(act==='name'||act==='handle'){
+      const isName=act==='name';
+      const result=await ask({title:isName?'Change display name':'Change @username',hint:`Editing @${person.username}'s profile. They will see the change immediately.`,emoji:isName?'✏️':'👤',ok:'Save changes',value:isName?person.display_name:person.username});
+      if(result===null)return;
+      const key=isName?'display_name':'username';
+      await api(endpoint+'/profile',{method:'PATCH',body:JSON.stringify({[key]:result})});toast('Profile changed for @'+person.username);
+    }else if(act==='avatar'){
+      adminAvatarUser=id;$('adminAvatarInput').value='';$('adminAvatarInput').click();return;
+    }else if(act==='clear-avatar'){
+      const ok=await ask({title:'Remove @'+person.username+' photo?',hint:'Their avatar will show initials again. This is audited.',emoji:'🖼️',ok:'Remove photo',input:false,danger:true});if(!ok)return;
+      await api(endpoint+'/avatar',{method:'DELETE'});toast('Photo removed');
+    }else if(act==='ban'){
+      const ban=!person.banned_at;
+      if(ban){
+        const result=await ask({title:'Ban @'+person.username+' from Bonfire?',hint:'They will be disconnected and unable to log in until unbanned. Type their exact username to confirm.',emoji:'🚫',placeholder:person.username,ok:'Ban account',danger:true});
+        if(result!==person.username){if(result!==null)toast('Username did not match; no ban made.');return;}
+      }else{
+        const ok=await ask({title:'Unban @'+person.username+'?',hint:'This restores their ability to sign in.',emoji:'🔓',ok:'Unban',input:false});if(!ok)return;
+      }
+      const reason=ban?await ask({title:'Reason for ban (optional)',hint:'Reason is stored in moderation records, not shown publicly.',emoji:'🛡️',ok:'Save reason',placeholder:'Optional reason',allowEmpty:true}):'';
+      if(reason===null)return;
+      await api(endpoint+'/ban',{method:'PATCH',body:JSON.stringify({banned:ban,reason})});toast(ban?'User banned':'User unbanned');
+    }else if(act==='kick'){
+      const sid=$('adminServerSelect').value,server=adminServerCatalog.find(s=>s.id===sid);
+      if(!sid){toast('Choose a server first.');return;}
+      const ok=await ask({title:'Kick @'+person.username+'?',hint:'Remove them from '+server.name+'. This does not ban the account; they can be invited again.',emoji:'👢',ok:'Kick from server',input:false,danger:true});if(!ok)return;
+      await api('/api/admin/servers/'+encodeURIComponent(sid)+'/users/'+encodeURIComponent(id)+'/kick',{method:'POST',body:'{}'});toast('User kicked from '+server.name);
+    }
+    loadAdmin();
+  }catch(err){$('adminError').textContent=err.message;toast(err.message)}
+  finally{b.disabled=false}
+});
+$('adminAvatarInput').addEventListener('change',async(e)=>{
+  const file=e.target.files?.[0],id=adminAvatarUser;
+  if(!file||!id)return;
+  try{await uploadProfilePhoto('/api/admin/users/'+encodeURIComponent(id)+'/avatar',file);toast('User photo updated');loadAdmin();}
+  catch(err){$('adminError').textContent=err.message;toast(err.message)}
+  finally{adminAvatarUser=null;e.target.value=''}
+});
 $('adminUsers').addEventListener('change',async e=>{
   const select=e.target.closest('select[data-admin-rank]');if(!select||!user?.is_admin)return;
   const id=select.dataset.adminRank, entry=adminResults.find(x=>x.id===id);

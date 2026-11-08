@@ -1,0 +1,4 @@
+<resources>
+    <!-- Set this to your actual live Render URL before building, e.g. https://your-app.onrender.com -->
+    <string name="bonfire_url">https://YOUR-BONFIRE-SERVICE.onrender.com</string>
+</resources>

@@ -1,6 +1,14 @@
-# Bonfire Next 🔥 — Render-ready social chat
+# Bonfire Next v4 🔥 — Shift evidence exports + desktop/mobile wrappers
 
 A full-stack Express + Socket.IO + PostgreSQL chat app with realtime channels, DMs, reactions, voice, search, and rich inline file sharing. This is the improved version of the supplied Bonfire Render project; no Supabase is required.
+
+## New in v4: export channel/server evidence and build apps
+
+Shift's Control Room has two new non-destructive backup controls: **Back up selected channel** and **Back up entire server**. Each sends a ZIP download directly to the local computer, including retained messages (JSON and spreadsheet-safe CSV), server/channel/member metadata, server moderation/rank audit history, any unexpired attachments, a list of missing files, and SHA-256 hashes. Private DMs, passwords, and login tokens are not exported. Only verified Shift can create a single-use download link; exports are audited. **Back up before purging or expiry**; backups preserve available evidence but do not restore deleted data.
+
+Archives are bounded to 20,000 messages / 12,000 attachments / 256 MiB of live attachment content. Larger servers should be exported one channel at a time. Backups are not digital signatures and should be secured privately.
+
+A **Windows x64 `.exe`** app-window launcher is provided as a separate download; it needs Edge or Chrome (or falls back to the default browser), and your live site URL must be configured at first run. A complete **Android Studio WebView wrapper** is included in `apps/android` with an automated GitHub Actions APK build. The Android SDK was unavailable locally, so the APK itself was not built here. Read **[BUILD-APPS.md](BUILD-APPS.md)** for steps and limitations.
 
 ## What's new in v2
 
@@ -40,6 +48,28 @@ Ranks display on everyone's profile panel, the server member list, their message
 
 A secret **Sparkkeeper** celebration can be found by interacting with the flame. It's a personal, device-local cosmetic discovery, *not* a sixth rank or something that changes other users' profiles. Motion effects respect reduced-motion settings.
 
+## New in v3: profile customization + full Shift Control Room
+
+Every user can open their own profile by clicking their avatar **or** username at the bottom-left. A profile editor now provides:
+
+- **Profile picture** — upload JPG, PNG, WebP or GIF up to 2 MiB, or remove the picture to restore an initial avatar. Photos are stored on the server and visible to other members; the general **30 MiB attachment limit is unchanged**.
+- **Display name** — change the name displayed in messages, DMs, members, and profiles.
+- **@username** — change the unique sign-in/mention handle (3–24 lowercase letters, digits or underscores). The verified administrator's `shift` handle is locked to protect admin identity. Users must use the updated handle at next sign-in.
+- Rank glows and borders remain cosmetic, **never suppress avatar initials**; uploaded photos appear inside the ring, without losing the rank aura. Shift still **manually** controls F/D/B/A/T ranks.
+
+Shift's 👑 **Control Room** now has more than rank assignment:
+
+- **Purge channel:** Select a server and channel, then type the exact channel name to confirm deleting the channel's messages and unreferenced attachments. The channel itself stays open. This is permanent; back up important conversations first.
+- **Ban / unban:** Ban a user across Bonfire (immediately disconnect current sessions and block future authenticated requests and logins). Reversal is available; a ban reason is optional. Cannot ban Shift.
+- **Kick:** Remove a user from the chosen server. This **does not** ban them; they may rejoin if they get an invite. Cannot kick a server owner or the verified Shift account.
+- **Edit profiles:** Change a user's display name, @username, profile picture, or remove their photo. These edits update connected clients in real time and are logged.
+- **Moderate messages:** When viewing a **public server channel**, hover over a message and click 🛡️✏️ to edit or 🛡️🗑️ to permanently delete it. Edited text is labeled *edited by admin*. Admins intentionally **cannot read, alter, or purge private DMs through the moderation panel**.
+- **Audit history:** The Control Room displays recent admin actions and rank changes. DB tables `moderation_audit` and `rank_audit` record the changes.
+
+For security, the server checks the **actual permanent account ID** in `SHIFT_ADMIN_USER_ID` *and* the exact `shift` username on each admin API request. UI buttons alone do not grant permission. Non-admin clients receive HTTP 403. Self-ban and self-kick are blocked. Keep `JWT_SECRET` secret, and set `SHIFT_ADMIN_USER_ID` once in Render as documented below.
+
+**After upgrading:** Deploy the new ZIP, refresh the browser with Ctrl+Shift+R, and make sure `SHIFT_ADMIN_USER_ID` still contains the ID of your original `shift` account. New database columns and the audit table are created automatically on startup. Existing accounts, messages, ranks, and attachments are preserved; channel purges and bans only happen when Shift explicitly triggers them.
+
 ## Deploy to Render
 
 1. Create a GitHub repository with **this folder's contents at its root**, including `package.json`, `server.js`, `file-types.js`, `render.yaml`, and `public/`.
@@ -58,7 +88,7 @@ npm install
 npm start
 ```
 
-For automated file-type and byte-range tests (no database needed):
+For file handling, ranks, avatar validation, and moderation-rule tests (no database needed):
 
 ```bash
 npm test

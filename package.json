@@ -1,12 +1,12 @@
 {
   "name": "bonfire-chat",
-  "version": "2.1.0",
+  "version": "4.0.0",
   "private": true,
-  "description": "Bonfire Next: realtime chat with 30 MB universal file sharing and inline music playback",
+  "description": "Bonfire Next: Shift evidence backup exports, profiles, admin control room, 30 MB sharing, music and app wrappers",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test-file-types.js test-rank-system.js"
+    "test": "node --test test-file-types.js test-rank-system.js test-moderation-utils.js test-evidence-zip.js"
   },
   "engines": {
     "node": ">=20"

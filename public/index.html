@@ -74,7 +74,7 @@
     <div class="me">
       <div class="avatar-wrap"><div class="avatar me-avatar" id="myAvatar">Y</div><i id="myDot" class="status-dot online"></i></div>
       <div class="me-info"><b id="myName">You</b><span id="myRank" class="my-rank"></span><small id="myStatus" class="online">Online</small></div>
-      <button id="adminOpen" class="icon-btn ghost admin-trigger hidden" data-tip="Shift Control Room" aria-label="Open rank administration">👑</button>
+      <button id="adminOpen" class="icon-btn ghost admin-trigger hidden" data-tip="Shift Control Room" aria-label="Open Shift Control Room">👑</button>
       <button id="notifBtn" class="icon-btn ghost" data-tip="Notifications" aria-label="Notification settings">🔔</button>
       <button id="soundToggle" class="icon-btn ghost" data-tip="Sounds" aria-label="Toggle sounds">🔈</button>
       <button id="signout" class="icon-btn ghost" data-tip="Sign out" aria-label="Sign out">↪</button>
@@ -179,22 +179,34 @@
   <div class="modal-card profile-modal-card">
     <div class="modal-head"><h2>Campfire profile</h2><button id="profileClose" class="icon-btn" aria-label="Close profile">✕</button></div>
     <div id="profileContents" class="profile-contents" aria-live="polite"><p class="muted">Loading profile…</p></div>
-    <div class="profile-buttons"><button id="profileMessage" class="btn primary hidden">💬 Send a message</button><button id="profileManage" class="btn secondary hidden">👑 Assign rank</button></div>
+    <div id="profileCustomize" class="profile-customize hidden"></div><input type="file" id="profileAvatarInput" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" aria-label="Choose profile photo">
+    <div class="profile-buttons"><button id="profileMessage" class="btn primary hidden">💬 Send a message</button><button id="profileManage" class="btn secondary hidden">👑 Manage user</button></div>
   </div>
 </div>
 
 <!-- ============ VERIFIED SHIFT ADMIN ============ -->
 <div id="adminModal" class="modal hidden" aria-labelledby="adminTitle">
   <div class="modal-card admin-panel">
-    <div class="modal-head"><div><p class="admin-eyebrow">👑 SHIFT ONLY • CONTROL ROOM</p><h2 id="adminTitle">Rank studio</h2></div><button id="adminClose" class="icon-btn" aria-label="Close admin panel">✕</button></div>
-    <p class="admin-lead">Grades are personal decisions. Choose who earns a profile effect — there are no automatic scores.</p>
+    <div class="modal-head"><div><p class="admin-eyebrow">👑 SHIFT ONLY • CONTROL ROOM</p><h2 id="adminTitle">Control Room</h2></div><button id="adminClose" class="icon-btn" aria-label="Close admin panel">✕</button></div>
+    <p class="admin-lead">Moderate users and channels, award profile ranks, and change profiles. Use the 🛡️ buttons on channel messages to edit or remove them. All moderation actions are logged.</p>
     <div id="adminStats" class="admin-stats"></div>
     <div class="rank-legend"><span class="rank-badge rank-f">F • Ash</span><span class="rank-badge rank-d">D • Ember</span><span class="rank-badge rank-b">B • Blaze</span><span class="rank-badge rank-a">A • Nova</span><span class="rank-badge rank-t">T • Titan</span></div>
     <label class="admin-filter"><span aria-hidden="true">⌕</span><input id="adminSearch" type="search" placeholder="Search users by name or @username" maxlength="64" autocomplete="off"></label>
+    <div class="control-section"><div class="control-section-head"><b>🧹 Channel operations</b><span>Permanent deletion requires confirmation</span></div>
+      <div class="admin-channel-controls"><label>Server<select id="adminServerSelect"></select></label><label>Channel<select id="adminChannelSelect"></select></label><button id="adminPurge" class="btn danger" type="button">Purge channel</button></div>
+      <div class="evidence-panel"><div class="control-section-head"><b>🗃️ Evidence Backup</b><span>Private • Shift-only • saved on your computer</span></div>
+        <p>Export existing channel or entire server history, members, attachments and audit entries as a ZIP with SHA-256 checksums. Direct messages are not included.</p>
+        <div class="evidence-buttons"><button id="adminBackupChannel" class="btn secondary" type="button">⬇ Back up selected channel</button><button id="adminBackupServer" class="btn secondary" type="button">⬇ Back up entire server</button></div>
+        <small id="adminBackupStatus" role="status">Export before purging. Deleted messages and expired files cannot be recovered.</small>
+      </div>
+    </div>
+    <div class="control-section-head users-section-title"><b>👥 People &amp; ranks</b><span>Kick applies to selected server · Ban blocks Bonfire login</span></div>
+    <input id="adminAvatarInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" aria-label="Upload another user's avatar">
     <p id="adminError" class="error" role="alert"></p>
     <div id="adminUsers" class="admin-users scroll" aria-live="polite"></div>
     <div class="admin-pager"><span id="adminPaging"></span><button id="adminPrev" class="btn secondary" type="button">← Previous</button><button id="adminNext" class="btn secondary" type="button">Next →</button></div>
     <details class="rank-history"><summary>Recent rank changes</summary><div id="adminHistory"></div></details>
+    <details class="rank-history"><summary>🛡️ Moderation audit trail</summary><div id="adminModerationHistory" class="moderation-history"></div></details>
   </div>
 </div>
 
